@@ -3,5 +3,11 @@ name = "mafia-ai"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = []
+
+
+[project.optional-dependencies]
+server = ["fastapi", "uvicorn", ...]
+narrator = ["torch", "transformers", ...]
+analytics = ["streamlit", "plotly", ...]
