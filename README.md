@@ -1,6 +1,6 @@
 ## Структура проекта
 
-\`\`\`
+```
 mafia-game/
 ├── README.md
 ├── .gitignore
@@ -105,4 +105,4 @@ mafia-game/
     ├── api.md
     ├── websocket_protocol.md
     └── setup_guide.md
-\`\`\`
+```
