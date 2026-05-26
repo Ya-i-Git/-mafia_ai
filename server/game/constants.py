@@ -7,6 +7,7 @@ DEFENSE_DURATION = 60         # оправдательная минута для
 VOTING_DURATION = 30
 DEFENSE_TIE_DURATION = 30     # полминуты при ничьей
 VOTING_TIE_DURATION = 30
+LAST_WORDS_DURATION = 60
 
 # Ночные фазы
 NIGHT_MAFIA_CHAT = 60         # время чата мафии (можно общаться и выбирать цель)
