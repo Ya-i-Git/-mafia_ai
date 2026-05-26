@@ -1,6 +1,10 @@
 import asyncio
 from narrator.graph import create_narrator_graph
 from narrator.schemas import NarratorState
+from narrator.tracing import setup_tracing, traced_generate
+
+setup_tracing()
+
 
 async def generate(event: dict, world: str, context: dict) -> str:
     """
@@ -26,3 +30,5 @@ async def generate(event: dict, world: str, context: dict) -> str:
     # Запускаем граф асинхронно
     final_state = await graph.ainvoke(initial_state)
     return final_state["response"]
+
+generate = traced_generate(generate)

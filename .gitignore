@@ -10,3 +10,6 @@ wheels/
 .venv
 .env
 venv/
+
+debug_narrator.ipynb
+narrator_test_results.csv

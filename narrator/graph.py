@@ -63,16 +63,17 @@ def call_model(state: NarratorState) -> NarratorState:
     state["response"] = response.content
     return state
 
+FORBIDDEN = [
+    "мафия", "дон", "шериф", "доктор", "роль",
+    "мирные жители", "мирный", "комиссар", "крестный отец"
+]
+
 def validate(state: NarratorState) -> NarratorState:
-    """Узел: проверяет, что ответ не содержит запрещённой информации.
-       Если находит нарушение, заменяет ответ на стандартное сообщение.
-    """
-    forbidden_words = ["мафия — это", "доктор —", "шериф", "роль"]
-    for word in forbidden_words:
-        if word in state["response"].lower():
-            # Запасной текст при нарушении
-            state["response"] = "Ведущий загадочно молчит, не выдавая секретов."
-            break
+    response_lower = state["response"].lower()
+    for word in FORBIDDEN:
+        if word in response_lower:
+            state["response"] = "Ведущий хранит молчание..."
+            return state
     return state
 
 def should_validate(world: str) -> bool:
