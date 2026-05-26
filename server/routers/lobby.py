@@ -16,6 +16,10 @@ class JoinGameResponse(BaseModel):
     status: str
     role: str | None = None
 
+class StartGameRequest(BaseModel):
+    game_id: str
+    username: str | None = None   # необязательно, для совместимости с JoinGameRequest
+
 class StartGameResponse(BaseModel):
     status: str
 
@@ -36,12 +40,12 @@ async def join_game(body: JoinGameRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/start_game", response_model=StartGameResponse)
-async def start_game(body: JoinGameRequest):  # повторно используем JoinGameRequest
+async def start_game(body: StartGameRequest):
     game = game_manager.get_game(body.game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Игра не найдена")
     try:
-        await game.start_game()  # start_game теперь async (см. правки ниже)
+        await game.start_game()
         return StartGameResponse(status="started")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

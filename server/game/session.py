@@ -1,4 +1,5 @@
 # server/game/session.py
+
 import asyncio
 import logging
 import random
@@ -10,6 +11,7 @@ from server.game.roles import Role
 from server.game.constants import *
 
 logger = logging.getLogger(__name__)
+
 
 class GamePhase(str, Enum):
     WAITING = "waiting"
@@ -24,6 +26,7 @@ class GamePhase(str, Enum):
     NIGHT_SHERIFF = "night_sheriff"
     NIGHT_DOCTOR = "night_doctor"
     GAME_OVER = "game_over"
+
 
 class DefaultNarrator:
     """Заглушка рассказчика, пока не подключён AI-ведущий."""
@@ -72,6 +75,7 @@ class DefaultNarrator:
     async def doctor_heal(self) -> str:
         return "Доктор просыпается и лечит (30 сек)."
 
+
 class GameSession:
     def __init__(self, game_id: str, test_mode: bool = False, narrator: Optional[DefaultNarrator] = None):
         self.game_id = game_id
@@ -91,6 +95,7 @@ class GameSession:
         self._current_speaker_id: Optional[str] = None
         self._player_nominated_during_speech = False
         self._day_number = 0
+        self.is_first_day = True                      # первый день – без номинаций
 
         # Голосование
         self.nominated_players: list[str] = []        # user_id выставленных на текущее голосование
@@ -202,6 +207,7 @@ class GameSession:
 
     async def _start_day(self):
         self._day_number += 1
+        self.is_first_day = (self._day_number == 1)   # первый день – без номинаций
         # Сброс номинаций
         for p in self.players.values():
             p.nominated = False
@@ -276,6 +282,10 @@ class GameSession:
             await self._finish_current_speaker()
 
     async def _process_nominate(self, user_id: str, target_username: str):
+        # Запрет номинации в первый день
+        if self.is_first_day:
+            await self._send_personal({"type": "system", "text": "В первый день нельзя выставлять игроков."}, user_id)
+            return
         if user_id != self._current_speaker_id:
             return
         if self.phase not in (GamePhase.DAY, GamePhase.NOMINATION):
@@ -294,6 +304,11 @@ class GameSession:
     # Защита и голосование
     # ------------------------------------------------------------------
     async def _start_defense_phase(self):
+        # Первый день – сразу ночь
+        if self.is_first_day:
+            await self._broadcast_system("Первый день – знакомство. Никто не выставляется. Переход к ночи.")
+            await self._start_night()
+            return
         if not self.nominated_players:
             await self._broadcast_system("Никто не был выставлен. Переход к ночи.")
             await self._start_night()
@@ -554,10 +569,6 @@ class GameSession:
     async def _process_vote(self, user_id: str, target_username: str):
         if self.phase not in (GamePhase.VOTING, GamePhase.VOTING_TIE):
             return
-        # Запрет повторного голосования
-        if user_id in self.votes:
-            await self._send_personal({"type": "system", "text": "Вы уже проголосовали."}, user_id)
-            return
         voter = self.players.get(user_id)
         target = self._find_player_by_username(target_username)
         if not voter or not target or not voter.is_alive or not target.is_alive:
@@ -575,8 +586,19 @@ class GameSession:
         if not actor or not actor.is_alive:
             return
 
-        if action_type == "kill" and self.phase == GamePhase.NIGHT_MAFIA:  # Только во время хода мафии
-            if user_id == self.don_user_id and target and target.is_alive:
+        if action_type == "kill" and self.phase in (GamePhase.NIGHT_MAFIA, GamePhase.NIGHT_DON):
+            # Кто может убивать?
+            can_kill = False
+            if self.don_user_id and self.players.get(self.don_user_id, None) and self.players[self.don_user_id].is_alive:
+                # Дон жив, убивать может только дон
+                if user_id == self.don_user_id:
+                    can_kill = True
+            else:
+                # Дона нет или он мёртв – любой мафиози
+                if actor.role in (Role.MAFIA, Role.DON) and actor.is_alive:
+                    can_kill = True
+
+            if can_kill and target and target.is_alive:
                 if target.role in (Role.MAFIA, Role.DON):
                     await self._send_personal({"type": "system", "text": "Нельзя убить члена мафии."}, user_id)
                     return

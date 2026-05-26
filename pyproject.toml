@@ -57,3 +57,6 @@ test = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["narrator", "server", "analytics", "etl", "db*"]  # перечислите все пакеты с __init__.py
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
