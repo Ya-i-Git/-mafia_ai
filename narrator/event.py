@@ -1,0 +1,8 @@
+DAY_START = "day_start"
+VOTING = "voting"
+PLAYER_LYNCHED = "player_lynched"
+NIGHT_START = "night_start"
+NIGHT_KILL = "night_kill"
+SHERIFF_CHECK = "sheriff_check"
+DOCTOR_SAVE = "doctor_save"
+GAME_OVER = "game_over"
