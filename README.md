@@ -1,5 +1,5 @@
 ## Структура проекта
-
+```
 mafia-game/
 ├── backend/                        # весь Python‑код и ресурсы
 │   ├── server/                     # FastAPI приложение
@@ -90,8 +90,15 @@ mafia-game/
 ├── docker-compose.yml              # основной compose (postgres, backend, frontend, nginx, airflow, superset)
 ├── .env                            # переменные окружения (SECRET_KEY, DATABASE_URL, GROQ_API_KEY и т.д.)
 └── README.md
-
+```
 
 uv pip install -e ./backend - Установить все зависимости backend
 cd frontend
 npm install
+
+Запуск backend
+uvicorn backend.server.main:app --reload --port 8000
+
+Запуск frontend
+cd/frontend/
+npm run dev

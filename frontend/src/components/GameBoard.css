@@ -46,3 +46,53 @@
   padding: 5px 10px;
   font-size: 12px;
 }
+
+.nominate-btn.active {
+  background-color: #ffaa00;
+  color: #1a1a2e;
+  box-shadow: 0 0 5px #ffaa00;
+}
+
+.player-number {
+  font-weight: bold;
+  margin-right: 6px;
+  color: #888;
+}
+
+.player-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.nominated-mark {
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.phase-indicator {
+  margin-left: 12px;
+  font-size: 14px;
+  background: rgba(255,255,255,0.1);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.night-actions {
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 10px;
+  padding: 15px;
+  margin: 20px 0;
+}
+.night-action-btn {
+  background: #2c3e50;
+  border: none;
+  padding: 8px 12px;
+  margin: 5px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.night-action-btn:hover {
+  background: #e67e22;
+}

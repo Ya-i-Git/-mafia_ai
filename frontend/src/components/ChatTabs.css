@@ -1,9 +1,10 @@
 .chat-container {
-  background: rgba(0, 0, 0, 0.5);
-  border-radius: 10px;
   display: flex;
   flex-direction: column;
-  height: 400px;
+  height: 500px;  /* было 250px, увеличили */
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 10px;
+  margin-top: 20px;
 }
 
 .chat-tabs {
@@ -33,7 +34,7 @@
   padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
 }
 
 .chat-message {
