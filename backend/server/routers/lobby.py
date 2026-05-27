@@ -14,11 +14,10 @@ class JoinGameRequest(BaseModel):
 
 class JoinGameResponse(BaseModel):
     status: str
-    role: str | None = None
 
 class StartGameRequest(BaseModel):
     game_id: str
-    username: str | None = None   # необязательно, для совместимости с JoinGameRequest
+    username: str | None = None
 
 class StartGameResponse(BaseModel):
     status: str
@@ -34,7 +33,7 @@ async def join_game(body: JoinGameRequest):
     if not game:
         raise HTTPException(status_code=404, detail="Игра не найдена")
     try:
-        game.add_player(body.username, body.username)  # временно user_id == username
+        game.add_player(body.username, body.username)
         return JoinGameResponse(status="joined")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -1,37 +1,26 @@
 import { useState } from 'react';
-import { useChatStore } from '../stores/chatStore.ts';  // ← .ts
+import { useChatStore } from '../stores/chatStore';
 import './ChatTabs.css';
 
 interface ChatTabsProps {
-  gameId: string;
   isAlive: boolean;
   role: string | null;
-  phase: 'day' | 'night' | 'voting';
+  phase: string;
   onSendMessage: (text: string, chatType: string) => void;
 }
 
 export default function ChatTabs({ isAlive, role, phase, onSendMessage }: ChatTabsProps) {
   const [activeTab, setActiveTab] = useState<'common' | 'dead' | 'night'>('common');
   const [message, setMessage] = useState('');
-  const { messages, addMessage } = useChatStore();
+  const messages = useChatStore((state) => state.messages);
 
   const showDeadTab = !isAlive;
-  const showNightTab = role === 'mafia' && phase === 'night';
+  const showNightTab = (role === 'mafia' || role === 'don') && phase === 'night_mafia';
 
   const handleSend = () => {
     if (!message.trim()) return;
     onSendMessage(message, activeTab);
-    addMessage(activeTab, { text: message, username: 'Вы', timestamp: new Date() });
     setMessage('');
-  };
-
-  const getTabIcon = (tab: string) => {
-    switch(tab) {
-      case 'common': return '💬';
-      case 'dead': return '👻';
-      case 'night': return '🌙';
-      default: return '';
-    }
   };
 
   return (
@@ -46,7 +35,7 @@ export default function ChatTabs({ isAlive, role, phase, onSendMessage }: ChatTa
               className={activeTab === tab ? 'active' : ''}
               onClick={() => setActiveTab(tab)}
             >
-              {getTabIcon(tab)} {tab === 'common' ? 'Общий' : tab === 'dead' ? 'Мёртвых' : 'Ночной'}
+              {tab === 'common' ? '💬 Общий' : tab === 'dead' ? '👻 Мёртвых' : '🌙 Ночной'}
             </button>
           );
         })}

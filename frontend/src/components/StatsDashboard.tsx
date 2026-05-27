@@ -36,20 +36,18 @@ export default function StatsDashboard() {
   return (
     <div className="stats-dashboard">
       <h1>📊 Статистика Мафии</h1>
-      
       <div className="stats-grid">
         <div className="stat-card">
           <h3>Winrate по ролям</h3>
           <PieChart width={400} height={300}>
             <Pie data={pieData} dataKey="value" cx="50%" cy="50%" outerRadius={100} label>
-              {pieData.map((_, index) => (  // ← ИСПРАВЛЕНО: добавил entry, index
+              {pieData.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
               ))}
             </Pie>
             <Tooltip />
           </PieChart>
         </div>
-
         <div className="stat-card">
           <h3>Игр по дням</h3>
           <LineChart width={500} height={300} data={stats.gamesPerDay}>
@@ -60,7 +58,6 @@ export default function StatsDashboard() {
             <Line type="monotone" dataKey="count" stroke="#00f3ff" strokeWidth={2} />
           </LineChart>
         </div>
-
         <div className="stat-card">
           <h3>Топ игроков</h3>
           <BarChart width={500} height={300} data={stats.topPlayers}>
@@ -71,13 +68,11 @@ export default function StatsDashboard() {
             <Bar dataKey="wins" fill="#ff00ff" />
           </BarChart>
         </div>
-
         <div className="stat-card">
           <h3>Средняя длительность игры</h3>
           <div className="big-number">{Math.round(Number(stats.averageGameDuration) / 60)} минут</div>
         </div>
       </div>
-
       <div className="player-stats-section">
         <h2>Статистика игрока</h2>
         <div className="player-search">
@@ -92,26 +87,11 @@ export default function StatsDashboard() {
         </div>
         {userStats && (
           <div className="player-stats">
-            <div className="stat-row">
-              <span>Всего игр:</span>
-              <strong>{userStats.totalGames}</strong>
-            </div>
-            <div className="stat-row">
-              <span>Побед:</span>
-              <strong>{userStats.wins}</strong>
-            </div>
-            <div className="stat-row">
-              <span>Поражений:</span>
-              <strong>{userStats.losses}</strong>
-            </div>
-            <div className="stat-row">
-              <span>Точность первого угадывания:</span>
-              <strong>{userStats.firstGuessAccuracy}%</strong>
-            </div>
-            <div className="stat-row">
-              <span>Любимая роль:</span>
-              <strong>{userStats.favoriteRole}</strong>
-            </div>
+            <div className="stat-row"><span>Всего игр:</span><strong>{userStats.totalGames}</strong></div>
+            <div className="stat-row"><span>Побед:</span><strong>{userStats.wins}</strong></div>
+            <div className="stat-row"><span>Поражений:</span><strong>{userStats.losses}</strong></div>
+            <div className="stat-row"><span>Точность первого угадывания:</span><strong>{userStats.firstGuessAccuracy}%</strong></div>
+            <div className="stat-row"><span>Любимая роль:</span><strong>{userStats.favoriteRole}</strong></div>
           </div>
         )}
       </div>
