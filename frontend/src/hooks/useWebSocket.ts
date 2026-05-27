@@ -1,4 +1,3 @@
-// frontend/src/hooks/useWebSocket.ts
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useGameStore } from '../stores/gameStore';
@@ -19,7 +18,11 @@ export function useWebSocket(gameId: string) {
     const fullUrl = `${protocol}//${window.location.host}${wsUrl}`;
     const ws = new WebSocket(fullUrl);
     wsRef.current = ws;
+
     ws.onopen = () => setConnected(true);
+    ws.onclose = () => setConnected(false);
+    ws.onerror = (error) => console.error(error);
+
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -34,22 +37,29 @@ export function useWebSocket(gameId: string) {
           }
           addMessage('common', { text: data.text, username: 'Ведущий', timestamp: new Date() });
         } else if (data.type === 'chat') {
-          // Не добавляем свои сообщения (они уже добавлены на фронте через addMessage в handleSendChat)
           if (data.from !== username) {
             const tab = data.mafia_chat ? 'night' : 'common';
             addMessage(tab, { text: data.text, username: data.from, timestamp: new Date() });
           }
         }
-      } catch (e) { console.error(e); }
+      } catch (e) {
+        console.error(e);
+      }
     };
-    ws.onclose = () => setConnected(false);
-    ws.onerror = (error) => console.error(error);
-    return () => { if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(); };
+
+    return () => {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    };
   }, [username, gameId, setGameState, setCurrentRole, addMessage]);
 
   const sendMessage = useCallback((message: object) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(message));
-    else console.warn('WebSocket is not connected');
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    } else {
+      console.warn('WebSocket is not connected');
+    }
   }, []);
 
   return { connected, sendMessage };

@@ -1,20 +1,18 @@
-# Этап сборки
-FROM node:20-alpine AS builder
+FROM node:20-alpine
 
 WORKDIR /app
 
+# Копируем package.json и lock-файл
 COPY frontend/package*.json ./
+
+# Устанавливаем зависимости
 RUN npm ci
 
-COPY frontend/ ./
-RUN npm run build
+# Копируем исходный код фронтенда
+COPY frontend/ .
 
-# Этап раздачи статики через nginx
-FROM nginx:alpine
+# Открываем порт Vite (по умолчанию 3000)
+EXPOSE 3000
 
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+# Запускаем dev-сервер на 0.0.0.0 (чтобы был доступен из контейнера)
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

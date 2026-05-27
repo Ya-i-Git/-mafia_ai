@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/authStore';
 import ChatTabs from './ChatTabs';
 import Timer from './Timer';
 import { useEffect, useState, useRef } from 'react';
+import api from '../services/api';
 import './GameBoard.css';
 
 export default function GameBoard() {
@@ -22,18 +23,16 @@ export default function GameBoard() {
   const timerIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastServerTimeRef = useRef<number | null>(null);
 
-  const getRoleSticker = (role: string | null) => {
-    if (!role) return '👤';
-    switch (role) {
-      case 'mafia': return '🔪';
-      case 'don': return '👑';
-      case 'sheriff': return '🕵️';
-      case 'doctor': return '💉';
-      default: return '👤';
+  const handleStartGame = async () => {
+    if (!gameState || gameState.phase !== 'waiting') return;
+    try {
+      await api.post('/lobby/start_game', { game_id: gameId, username });
+      addMessage('common', { text: 'Игра запущена!', username: 'Система', timestamp: new Date() });
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Не удалось начать игру');
     }
   };
 
-  // Локальный таймер
   useEffect(() => {
     if (!gameState || gameState.time_left === undefined) return;
     const serverTime = gameState.time_left;
@@ -63,6 +62,64 @@ export default function GameBoard() {
   if (!gameState) {
     return <div className="loading">Загрузка игры...</div>;
   }
+
+  // === ЛОББИ (ожидание игроков) ===
+  if (gameState.phase === 'waiting') {
+    const isOwner = gameState.owner_id === username;
+    const minPlayers = 6;
+    const currentPlayers = gameState.players?.length ?? 0;
+    const canStart = isOwner && currentPlayers >= minPlayers;
+
+    return (
+      <div className="game-board waiting-lobby">
+        <div className="lobby-container">
+          <h2>Лобби игры #{gameId}</h2>
+          <div className="players-list">
+            <h3>Игроки ({currentPlayers} / {minPlayers}+)</h3>
+            <div className="players-grid">
+              {(gameState.players ?? []).map((p, idx) => (
+                <div key={p.id} className="player-card">
+                  <div className="player-name">
+                    {idx+1}. {p.username} {p.id === gameState.owner_id && '👑'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {isOwner && (
+            <button 
+              className="start-game-btn" 
+              onClick={handleStartGame} 
+              disabled={!canStart}
+            >
+              {canStart ? 'Начать игру' : `Нужно ещё ${minPlayers - currentPlayers} игроков`}
+            </button>
+          )}
+          <ChatTabs
+            isAlive={false}
+            role={null}
+            phase={gameState.phase}
+            onSendMessage={(text, chatType) => {
+              sendMessage({ type: 'chat', text, chatType });
+              addMessage(chatType as any, { text, username: 'Вы', timestamp: new Date() });
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // === ИГРОВОЙ ПРОЦЕСС (остальной код) ===
+  const getRoleSticker = (role: string | null) => {
+    if (!role) return '👤';
+    switch (role) {
+      case 'mafia': return '🔪';
+      case 'don': return '👑';
+      case 'sheriff': return '🕵️';
+      case 'doctor': return '💉';
+      default: return '👤';
+    }
+  };
 
   const isPreGame = gameState.phase === 'pre_game';
   const currentPlayer = gameState.players?.find(p => p.username === username);
@@ -120,7 +177,6 @@ export default function GameBoard() {
   const isVotingPhase = gameState.phase === 'voting' || gameState.phase === 'voting_tie';
   const isNominationPhase = (gameState.phase === 'day' || gameState.phase === 'nomination') && (gameState.day_number || 0) > 1;
 
-  // Ночные действия – показываем только в соответствующие фазы
   const isNightPhase = gameState.phase.startsWith('night');
   const showNightActions = isNightPhase && isAlive && (
     (gameState.phase === 'night_mafia' && (currentRole === 'mafia' || currentRole === 'don')) ||
