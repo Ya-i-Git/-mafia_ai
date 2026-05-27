@@ -3,57 +3,95 @@ version: '3.9'
 services:
   postgres:
     image: postgres:16
+    container_name: mafia-postgres
     env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mafia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mafia}
+      POSTGRES_DB: ${POSTGRES_DB:-mafia}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    restart: unless-stopped
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: mafia-backend
     ports:
       - "8000:8000"
     depends_on:
       - postgres
     env_file: .env
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mafia}:${POSTGRES_PASSWORD:-mafia}@postgres:5432/${POSTGRES_DB:-mafia}
+    volumes:
+      - ./backend:/app/backend        # hot-reload при разработке
+    command: uvicorn backend.server.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: mafia-frontend
     ports:
-      - "3000:3000"
+      - "3000:80"                     # nginx внутри контейнера слушает 80, наружу отдаём 3000
     depends_on:
       - backend
     environment:
       - VITE_API_URL=http://localhost:8000
       - VITE_WS_URL=ws://localhost:8000
+    restart: unless-stopped
 
   nginx:
     image: nginx:alpine
+    container_name: mafia-nginx
     ports:
       - "80:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - frontend
       - backend
+      - frontend
+    restart: unless-stopped
 
   airflow:
-    image: apache/airflow:3.2.1
+    image: apache/airflow:2.8.1
+    container_name: mafia-airflow
     ports:
       - "8080:8080"
-    command: webserver
+    env_file: .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-mafia}:${POSTGRES_PASSWORD:-mafia}@postgres:5432/airflow
+    volumes:
+      - ./backend/etl/dags:/opt/airflow/dags
+      - ./backend/etl/data:/opt/airflow/data
+    depends_on:
+      - postgres
+    command: >
+      bash -c "airflow db init && airflow webserver"
+    restart: unless-stopped
 
   superset:
     image: apache/superset:3.0.0
+    container_name: mafia-superset
     ports:
       - "8088:8088"
+    env_file: .env
     environment:
-      - SUPERSET_SECRET_KEY=your-secret-key
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-your-secret-key-please-change}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mafia}:${POSTGRES_PASSWORD:-mafia}@postgres:5432/superset
+    depends_on:
+      - postgres
     command: >
       sh -c "superset fab create-admin &&
              superset init &&
              superset run -p 8088 -h 0.0.0.0"
+    restart: unless-stopped
 
 volumes:
   postgres_data:

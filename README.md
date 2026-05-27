@@ -95,3 +95,10 @@ mafia-game/
 uv pip install -e ./backend - Установить все зависимости backend
 cd frontend
 npm install
+
+Запуск backend
+uvicorn backend.server.main:app --reload --port 8000
+
+Запуск frontend
+cd/frontend/
+npm run dev

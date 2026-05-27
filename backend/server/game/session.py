@@ -1,3 +1,4 @@
+# backend/server/game/session.py
 import asyncio
 import logging
 import random
@@ -40,6 +41,7 @@ class AINarrator:
 
 class GamePhase(str, Enum):
     WAITING = "waiting"
+    PRE_GAME = "pre_game"
     DAY = "day"
     NOMINATION = "nomination"
     DEFENSE = "defense"
@@ -65,10 +67,12 @@ class GameSession:
         self.players: dict[str, Player] = {}
         self.phase = GamePhase.WAITING
         self._phase_timer_task: Optional[asyncio.Task] = None
+        self._phase_timer_deadline: Optional[float] = None
+        self._pre_game_timer_task: Optional[asyncio.Task] = None
+        self._pre_game_timer_deadline: Optional[float] = None
         self._speech_timer_task: Optional[asyncio.Task] = None
         self._nomination_timer_task: Optional[asyncio.Task] = None
         self._last_words_timer_task: Optional[asyncio.Task] = None
-        self._phase_timer_deadline: Optional[float] = None
         self._speaker_order: list[str] = []
         self._current_speaker_index = 0
         self._current_speaker_id: Optional[str] = None
@@ -95,6 +99,7 @@ class GameSession:
         self._mafia_chat_enabled = False
         self.dead_chat_log: list[dict] = []
         self.mafia_chat_log: list[dict] = []
+        self._timer_updater_task: Optional[asyncio.Task] = None
 
     def _find_player_by_username(self, username: str) -> Optional[Player]:
         for p in self.players.values():
@@ -122,6 +127,7 @@ class GameSession:
     async def _change_phase(self, new_phase: GamePhase):
         self.phase = new_phase
         logger.info("Game %s phase -> %s", self.game_id, new_phase)
+        await self.broadcast_game_state()
 
     async def _start_timer(self, seconds: float, callback, attr: str = '_phase_timer_task'):
         task_attr = getattr(self, attr, None)
@@ -130,23 +136,60 @@ class GameSession:
         async def _wait_and_call():
             await asyncio.sleep(seconds)
             await callback()
+            # После выполнения отключаем отправку обновлений
+            if self._timer_updater_task:
+                self._timer_updater_task.cancel()
+                self._timer_updater_task = None
         setattr(self, attr, asyncio.create_task(_wait_and_call()))
-        self._phase_timer_deadline = asyncio.get_event_loop().time() + seconds
+        deadline_attr = attr.replace('_task', '_deadline')
+        setattr(self, deadline_attr, asyncio.get_event_loop().time() + seconds)
+        # Запускаем периодическую отправку game_state для обновления таймера на фронте
+        if self._timer_updater_task:
+            self._timer_updater_task.cancel()
+        self._timer_updater_task = asyncio.create_task(self._periodic_state_updater())
+
+    async def _periodic_state_updater(self):
+        """Раз в секунду отправляем game_state, пока таймер активен."""
+        count = 0
+        while True:
+            await asyncio.sleep(1)
+            if not self._phase_timer_task and not self._pre_game_timer_task:
+                logger.debug(f"Timer updater stopping for game {self.game_id}")
+                break
+            count += 1
+            logger.debug(f"Sending state update #{count}, time_left={self._get_remaining_time()}")
+            await self.broadcast_game_state()
 
     async def cancel_timers(self):
         for task in [self._phase_timer_task, self._speech_timer_task,
-                     self._nomination_timer_task, self._last_words_timer_task]:
+                     self._nomination_timer_task, self._last_words_timer_task,
+                     self._pre_game_timer_task, self._timer_updater_task]:
             if task and not task.done():
                 task.cancel()
         self._phase_timer_task = None
         self._speech_timer_task = None
         self._nomination_timer_task = None
         self._last_words_timer_task = None
+        self._pre_game_timer_task = None
+        self._timer_updater_task = None
         self._phase_timer_deadline = None
+        self._pre_game_timer_deadline = None
+
+    async def _pause_between_phases(self, seconds: int = 3):
+        await asyncio.sleep(seconds)
 
     async def _imitate_pause(self):
         pause = random.uniform(5, 30)
         await asyncio.sleep(pause)
+
+    def _get_remaining_time(self) -> int:
+        if self.phase == GamePhase.PRE_GAME and self._pre_game_timer_deadline:
+            remaining = self._pre_game_timer_deadline - asyncio.get_event_loop().time()
+            return max(0, int(remaining))
+        if self._phase_timer_deadline:
+            remaining = self._phase_timer_deadline - asyncio.get_event_loop().time()
+            return max(0, int(remaining))
+        return 0
 
     def add_player(self, user_id: str, username: str) -> Player:
         if user_id in self.players:
@@ -178,12 +221,30 @@ class GameSession:
                 self.don_user_id = uid
         logger.info("Roles assigned: %s", {p.username: p.role for p in self.players.values()})
 
+    async def _start_pre_game(self):
+        await self._change_phase(GamePhase.PRE_GAME)
+        self.assign_roles()
+        for player in self.players.values():
+            player.is_alive = True
+        story = await self._narrate("game_story", {})
+        await self._broadcast_system(story)
+        await self._add_history(story)
+        await self.broadcast_game_state()
+        await self._broadcast_system("🎲 Игра начинается...")
+        await self._start_timer(PRE_GAME_DURATION, self._begin_game, '_pre_game_timer_task')
+
+    async def _begin_game(self):
+        if self._pre_game_timer_task:
+            self._pre_game_timer_task = None
+        await self._broadcast_system("Игра начинается! Город просыпается.")
+        await self._pause_between_phases()
+        await self._start_day()
+
     async def start_game(self):
         if len(self.players) < MIN_PLAYERS:
             raise ValueError("Недостаточно игроков")
-        self.assign_roles()
-        self._day_number = 0
-        await self._start_day()
+        await self._start_pre_game()
+        await self.broadcast_game_state()
 
     def _init_speaker_order(self):
         alive = [uid for uid, p in self.players.items() if p.is_alive]
@@ -217,6 +278,7 @@ class GameSession:
         await self._broadcast_system(text)
         await self._add_history(text)
         await self.broadcast_game_state()
+        await self._pause_between_phases()
         await self._start_player_speech()
 
     async def _start_player_speech(self):
@@ -228,6 +290,8 @@ class GameSession:
         self._player_nominated_during_speech = False
         self._speaker_nominated_target = None
         player = self.players[uid]
+        await asyncio.sleep(3)  # пауза перед объявлением
+        await self._broadcast_system(f"🎤 Сейчас говорит {player.username}")
         text = await self._narrate("player_speech", {
             "username": player.username,
             "duration": DAY_SPEECH
@@ -263,17 +327,10 @@ class GameSession:
         speaker_uid = self._current_speaker_id
         if speaker_uid:
             player = self.players.get(speaker_uid)
-            if player:
-                if self._speaker_nominated_target:
-                    target = self.players.get(self._speaker_nominated_target)
-                    if target:
-                        msg = f"{player.username} выставляет {target.username}."
-                        await self._broadcast_system(msg)
-                        await self._add_history(msg)
-                else:
-                    msg = f"{player.username} воздержался."
-                    await self._broadcast_system(msg)
-                    await self._add_history(msg)
+            if player and not self.is_first_day and self._speaker_nominated_target is None:
+                msg = f"{player.username} воздержался от номинации."
+                await self._broadcast_system(msg)
+                await self._add_history(msg)
         self._current_speaker_id = None
         self._speaker_nominated_target = None
         self._player_nominated_during_speech = False
@@ -491,6 +548,7 @@ class GameSession:
         night_msg = await self._narrate("night_start", {})
         await self._broadcast_system(night_msg)
         await self._add_history(night_msg)
+        await self._pause_between_phases()
         text = await self._narrate("mafia_chat_opened", {})
         await self._broadcast_system(text)
         await self._add_history(text)
@@ -621,6 +679,20 @@ class GameSession:
 
     async def handle_message(self, user_id: str, raw: dict):
         msg_type = raw.get("type")
+        player = self.players.get(user_id)
+        if not player:
+            return
+
+        if self.phase == GamePhase.PRE_GAME:
+            if msg_type == "chat":
+                await self._process_chat(user_id, raw.get("text", ""))
+            else:
+                await self._send_personal(
+                    {"type": "system", "text": "Игра ещё не началась. Дождитесь отсчёта."},
+                    user_id
+                )
+            return
+
         if msg_type == "chat":
             await self._process_chat(user_id, raw.get("text", ""))
         elif msg_type == "nominate":
@@ -641,16 +713,16 @@ class GameSession:
             return
         if self.phase in (GamePhase.DAY, GamePhase.NOMINATION):
             if user_id == self._current_speaker_id and self.phase == GamePhase.DAY:
-                await self._broadcast({"type": "chat", "from": player.username, "text": text})
+                await self._broadcast({"type": "chat", "from": player.username, "text": text}, exclude=[user_id])
             else:
                 await self._send_personal({"type": "system", "text": "Сейчас не ваша очередь говорить."}, user_id)
         elif self.phase in (GamePhase.DEFENSE, GamePhase.DEFENSE_TIE, GamePhase.LAST_WORDS):
             if user_id == self._current_speaker_id:
-                await self._broadcast({"type": "chat", "from": player.username, "text": text})
+                await self._broadcast({"type": "chat", "from": player.username, "text": text}, exclude=[user_id])
         elif self.phase == GamePhase.NIGHT_MAFIA and player.role in (Role.MAFIA, Role.DON) and self._mafia_chat_enabled:
             msg = {"type": "chat", "from": player.username, "text": text, "mafia_chat": True}
-            await self.send_to_role(msg, Role.MAFIA)
-            await self.send_to_role(msg, Role.DON)
+            await self.send_to_role(msg, Role.MAFIA, exclude=[user_id])
+            await self.send_to_role(msg, Role.DON, exclude=[user_id])
             self.mafia_chat_log.append(msg)
 
     async def _process_vote(self, user_id: str, target_username: str):
@@ -778,9 +850,10 @@ class GameSession:
     async def send_personal(self, message: dict, user_id: str):
         await self._send_personal(message, user_id)
 
-    async def send_to_role(self, message: dict, role: Role):
+    async def send_to_role(self, message: dict, role: Role, exclude: Optional[list[str]] = None):
+        exclude = exclude or []
         for player in self.players.values():
-            if player.role == role and player.is_alive and player.websocket:
+            if player.role == role and player.is_alive and player.user_id not in exclude and player.websocket:
                 await self._send_personal(message, player.user_id)
 
     def handle_disconnect(self, user_id: str):
@@ -791,26 +864,23 @@ class GameSession:
             if self.phase == GamePhase.WAITING:
                 self.players.pop(user_id, None)
                 asyncio.create_task(self.broadcast_game_state())
-
-    def _get_remaining_time(self) -> int:
-        if self._phase_timer_deadline is None:
-            return 0
-        remaining = self._phase_timer_deadline - asyncio.get_event_loop().time()
-        return max(0, int(remaining))
+            else:
+                asyncio.create_task(self.broadcast({"type": "system", "text": f"{player.username} отключился. Ожидаем переподключения."}))
 
     def get_game_state(self) -> dict:
+        players_data = [
+            {
+                "id": uid,
+                "username": p.username,
+                "is_alive": p.is_alive,
+                "nominated": p.nominated,
+            }
+            for uid, p in self.players.items()
+        ]
         return {
             "phase": self.phase.value,
             "day_number": self._day_number,
-            "players": [
-                {
-                    "id": uid,
-                    "username": p.username,
-                    "is_alive": p.is_alive,
-                    "nominated": p.nominated,
-                }
-                for uid, p in self.players.items()
-            ],
+            "players": players_data,
             "time_left": self._get_remaining_time(),
             "nominated_players": self.nominated_players,
             "voting_targets": self.voting_targets,
@@ -818,4 +888,5 @@ class GameSession:
 
     async def broadcast_game_state(self):
         state = self.get_game_state()
+        logger.debug(f"Broadcasting state: phase={state['phase']}, time_left={state['time_left']}")
         await self._broadcast({"type": "game_state", "state": state})

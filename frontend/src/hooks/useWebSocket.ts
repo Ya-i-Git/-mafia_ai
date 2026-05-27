@@ -1,3 +1,4 @@
+// frontend/src/hooks/useWebSocket.ts
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useGameStore } from '../stores/gameStore';
@@ -6,7 +7,7 @@ import { useChatStore } from '../stores/chatStore';
 export function useWebSocket(gameId: string) {
   const { username } = useAuthStore();
   const setGameState = useGameStore((state) => state.setGameState);
-  const setCurrentRole = useGameStore((state) => state.setCurrentRole);   // ← добавим в gameStore
+  const setCurrentRole = useGameStore((state) => state.setCurrentRole);
   const addMessage = useChatStore((state) => state.addMessage);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -22,17 +23,22 @@ export function useWebSocket(gameId: string) {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'game_state') setGameState(data.state);
-        else if (data.type === 'system') {
-          // Проверяем, не содержит ли сообщение информацию о роли
-          const roleMatch = data.text.match(/Ваша роль: (\w+)/);
-          if (roleMatch) {
-            setCurrentRole(roleMatch[1]);
+        if (data.type === 'game_state') {
+          setGameState(data.state);
+        } else if (data.type === 'role_assigned') {
+          setCurrentRole(data.role);
+        } else if (data.type === 'system') {
+          const match = data.text.match(/Ваша роль: (\w+)/);
+          if (match && !useGameStore.getState().currentRole) {
+            setCurrentRole(match[1]);
           }
           addMessage('common', { text: data.text, username: 'Ведущий', timestamp: new Date() });
         } else if (data.type === 'chat') {
-          const tab = data.mafia_chat ? 'night' : 'common';
-          addMessage(tab, { text: data.text, username: data.from, timestamp: new Date() });
+          // Не добавляем свои сообщения (они уже добавлены на фронте через addMessage в handleSendChat)
+          if (data.from !== username) {
+            const tab = data.mafia_chat ? 'night' : 'common';
+            addMessage(tab, { text: data.text, username: data.from, timestamp: new Date() });
+          }
         }
       } catch (e) { console.error(e); }
     };

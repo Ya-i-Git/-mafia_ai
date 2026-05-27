@@ -10,32 +10,21 @@ async def game_websocket(websocket: WebSocket, game_id: str, username: str = Que
     if not game:
         await websocket.close(code=4004, reason="Game not found")
         return
-    
-    # Ищем игрока по username (не user_id, т.к. у нас в сессии user_id = username)
-    player = None
-    for p in game.players.values():
-        if p.username == username:
-            player = p
-            break
+    player = game._find_player_by_username(username)
     if not player:
         await websocket.close(code=4001, reason="Not in lobby")
         return
-
-    # Если у игрока уже есть открытый сокет, закрываем старый
-    if player.websocket is not None:
-        try:
-            await player.websocket.close(code=4003, reason="Duplicate connection")
-        except:
-            pass
-
     await websocket.accept()
+    # Обновляем websocket при переподключении
     player.websocket = websocket
-
-    # Отправляем приветствие и роль
+    # Если игрок мёртв, отправляем ему историю чата мёртвых
+    if not player.is_alive and game.phase != GamePhase.WAITING:
+        await game._send_dead_history(player.user_id)
     role_text = player.role.value if game.phase != GamePhase.WAITING else "не назначена"
     await game.send_personal({"type": "system", "text": f"Добро пожаловать, {username}. Игра {game_id}. Ваша роль: {role_text}."}, player.user_id)
+    if game.phase != GamePhase.WAITING:
+        await game.send_personal({"type": "role_assigned", "role": player.role.value}, player.user_id)
     await game.send_personal({"type": "game_state", "state": game.get_game_state()}, player.user_id)
-
     try:
         while True:
             data = await websocket.receive_json()
@@ -43,9 +32,5 @@ async def game_websocket(websocket: WebSocket, game_id: str, username: str = Que
     except WebSocketDisconnect:
         game.handle_disconnect(player.user_id)
     finally:
-        if game.phase == GamePhase.WAITING:
-            game.players.pop(player.user_id, None)
-        else:
-            if player.is_alive:
-                player.is_alive = False
-                await game.broadcast({"type": "system", "text": f"{player.username} покинул игру (дисконнект)."})
+        if player.websocket == websocket:
+            player.websocket = None

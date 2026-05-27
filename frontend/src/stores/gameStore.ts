@@ -18,7 +18,7 @@ interface GameStore {
   gameState: GameState | null;
   currentRole: string | null;
   setGameState: (state: GameState) => void;
-  setCurrentRole: (role: string) => void;
+  setCurrentRole: (role: string | null) => void;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
