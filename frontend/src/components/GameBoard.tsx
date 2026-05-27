@@ -22,7 +22,6 @@ export default function GameBoard() {
   const timerIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastServerTimeRef = useRef<number | null>(null);
 
-  // Стикеры для ролей
   const getRoleSticker = (role: string | null) => {
     if (!role) return '👤';
     switch (role) {
@@ -68,6 +67,7 @@ export default function GameBoard() {
   const isPreGame = gameState.phase === 'pre_game';
   const currentPlayer = gameState.players?.find(p => p.username === username);
   const isAlive = currentPlayer?.is_alive === true;
+  const isActiveSpeaker = gameState.current_speaker_id === currentPlayer?.id;
 
   const handleSendChat = (text: string, chatType: string) => {
     sendMessage({ type: 'chat', text, chatType });
@@ -113,19 +113,20 @@ export default function GameBoard() {
 
   const getPhaseIcon = (phase: string) => {
     if (phase === 'day') return '☀️ День';
-    if (phase === 'night' || phase.startsWith('night')) return '🌙 Ночь';
+    if (phase.startsWith('night')) return '🌙 Ночь';
     return phase;
   };
 
   const isVotingPhase = gameState.phase === 'voting' || gameState.phase === 'voting_tie';
-  const isNominationPhase = gameState.phase === 'day' && (gameState.day_number || 0) > 1;
+  const isNominationPhase = (gameState.phase === 'day' || gameState.phase === 'nomination') && (gameState.day_number || 0) > 1;
 
-  // Ночные действия
+  // Ночные действия – показываем только в соответствующие фазы
   const isNightPhase = gameState.phase.startsWith('night');
   const showNightActions = isNightPhase && isAlive && (
-    (currentRole === 'mafia' || currentRole === 'don') ||
-    currentRole === 'sheriff' ||
-    currentRole === 'doctor'
+    (gameState.phase === 'night_mafia' && (currentRole === 'mafia' || currentRole === 'don')) ||
+    (gameState.phase === 'night_don' && currentRole === 'don') ||
+    (gameState.phase === 'night_sheriff' && currentRole === 'sheriff') ||
+    (gameState.phase === 'night_doctor' && currentRole === 'doctor')
   );
 
   let nightActionType: 'kill' | 'check' | 'heal' | null = null;
@@ -203,9 +204,9 @@ export default function GameBoard() {
             {isAlive && <span className="alive-badge">❤️ Жив</span>}
           </div>
         </div>
-        {isAlive && (
+        {isAlive && (gameState.phase === 'day' || gameState.phase === 'nomination') && isActiveSpeaker && (
           <button className="end-turn-btn" onClick={handleEndTurn}>
-            {gameState.phase === 'day' ? '⏩ Завершить речь' : '✔️ Завершить ход'}
+            ⏩ Завершить речь
           </button>
         )}
       </div>

@@ -1,3 +1,4 @@
+// frontend/src/stores/gameStore.ts
 import { create } from 'zustand';
 
 export interface GameState {
@@ -17,7 +18,7 @@ export interface GameState {
 interface GameStore {
   gameState: GameState | null;
   currentRole: string | null;
-  setGameState: (state: GameState) => void;
+  setGameState: (state: GameState | null) => void;   // разрешаем null
   setCurrentRole: (role: string | null) => void;
 }
 

@@ -1,6 +1,10 @@
+// frontend/src/components/StatsDashboard.tsx
 import { useEffect, useState } from 'react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from 'recharts';
-import api from '../services/api.ts';
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis,
+  CartesianGrid, Tooltip, PieChart, Pie, Cell
+} from 'recharts';
+import api from '../services/api';
 import './StatsDashboard.css';
 
 interface GlobalStats {
@@ -10,44 +14,69 @@ interface GlobalStats {
   topPlayers: Array<{ username: string; wins: number }>;
 }
 
+interface UserStats {
+  totalGames: number;
+  wins: number;
+  losses: number;
+  firstGuessAccuracy: number;
+  favoriteRole: string;
+}
+
 export default function StatsDashboard() {
   const [stats, setStats] = useState<GlobalStats | null>(null);
   const [selectedUser, setSelectedUser] = useState('');
-  const [userStats, setUserStats] = useState<any>(null);
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
 
   useEffect(() => {
-    api.get('/stats/global').then(res => setStats(res.data));
+    api.get('/stats/global')
+      .then(res => setStats(res.data))
+      .catch(err => console.error('Failed to load global stats:', err));
   }, []);
 
-  if (!stats) return <div className="loading">Загрузка статистики...</div>;
-
-  const COLORS = ['#00f3ff', '#ff00ff', '#ffaa00', '#00ff88'];
-  const pieData = Object.entries(stats.winrateByRole).map(([name, value]) => ({ name, value }));
-
   const loadUserStats = async () => {
+    if (!selectedUser.trim()) return;
     try {
-      const res = await api.get(`/stats/user/${selectedUser}`);
+      const res = await api.get(`/stats/user/${encodeURIComponent(selectedUser)}`);
       setUserStats(res.data);
     } catch (err) {
       alert('Игрок не найден');
     }
   };
 
+  if (!stats) return <div className="loading">Загрузка статистики...</div>;
+
+  const COLORS = ['#00f3ff', '#ff00ff', '#ffaa00', '#00ff88'];
+
+  const pieData = Object.entries(stats.winrateByRole).map(([name, value]) => ({
+    name,
+    value
+  }));
+
   return (
     <div className="stats-dashboard">
       <h1>📊 Статистика Мафии</h1>
+
       <div className="stats-grid">
         <div className="stat-card">
           <h3>Winrate по ролям</h3>
           <PieChart width={400} height={300}>
-            <Pie data={pieData} dataKey="value" cx="50%" cy="50%" outerRadius={100} label>
-              {pieData.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+            <Pie
+              data={pieData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              outerRadius={100}
+              label
+            >
+              {pieData.map((_, idx) => (
+                <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
               ))}
             </Pie>
             <Tooltip />
           </PieChart>
         </div>
+
         <div className="stat-card">
           <h3>Игр по дням</h3>
           <LineChart width={500} height={300} data={stats.gamesPerDay}>
@@ -58,6 +87,7 @@ export default function StatsDashboard() {
             <Line type="monotone" dataKey="count" stroke="#00f3ff" strokeWidth={2} />
           </LineChart>
         </div>
+
         <div className="stat-card">
           <h3>Топ игроков</h3>
           <BarChart width={500} height={300} data={stats.topPlayers}>
@@ -68,11 +98,15 @@ export default function StatsDashboard() {
             <Bar dataKey="wins" fill="#ff00ff" />
           </BarChart>
         </div>
+
         <div className="stat-card">
           <h3>Средняя длительность игры</h3>
-          <div className="big-number">{Math.round(Number(stats.averageGameDuration) / 60)} минут</div>
+          <div className="big-number">
+            {Math.round(Number(stats.averageGameDuration) / 60)} минут
+          </div>
         </div>
       </div>
+
       <div className="player-stats-section">
         <h2>Статистика игрока</h2>
         <div className="player-search">
@@ -87,11 +121,26 @@ export default function StatsDashboard() {
         </div>
         {userStats && (
           <div className="player-stats">
-            <div className="stat-row"><span>Всего игр:</span><strong>{userStats.totalGames}</strong></div>
-            <div className="stat-row"><span>Побед:</span><strong>{userStats.wins}</strong></div>
-            <div className="stat-row"><span>Поражений:</span><strong>{userStats.losses}</strong></div>
-            <div className="stat-row"><span>Точность первого угадывания:</span><strong>{userStats.firstGuessAccuracy}%</strong></div>
-            <div className="stat-row"><span>Любимая роль:</span><strong>{userStats.favoriteRole}</strong></div>
+            <div className="stat-row">
+              <span>Всего игр:</span>
+              <strong>{userStats.totalGames}</strong>
+            </div>
+            <div className="stat-row">
+              <span>Побед:</span>
+              <strong>{userStats.wins}</strong>
+            </div>
+            <div className="stat-row">
+              <span>Поражений:</span>
+              <strong>{userStats.losses}</strong>
+            </div>
+            <div className="stat-row">
+              <span>Точность первого угадывания:</span>
+              <strong>{userStats.firstGuessAccuracy}%</strong>
+            </div>
+            <div className="stat-row">
+              <span>Любимая роль:</span>
+              <strong>{userStats.favoriteRole}</strong>
+            </div>
           </div>
         )}
       </div>
