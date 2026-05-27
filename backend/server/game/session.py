@@ -56,9 +56,10 @@ class GamePhase(str, Enum):
     GAME_OVER = "game_over"
 
 class GameSession:
-    def __init__(self, game_id: str, world: str = "cyberpunk", test_mode: bool = False,
+    def __init__(self, game_id: str, owner_id: str, world: str = "cyberpunk", test_mode: bool = False,
                  narrator: Optional[Any] = None):
         self.game_id = game_id
+        self.owner_id = owner_id          # кто создал игру (имеет право стартовать)
         self.world = world
         self.test_mode = test_mode
         self.narrator = narrator or AINarrator(self.world)
@@ -73,7 +74,7 @@ class GameSession:
         self._speech_timer_task: Optional[asyncio.Task] = None
         self._nomination_timer_task: Optional[asyncio.Task] = None
         self._last_words_timer_task: Optional[asyncio.Task] = None
-        self._speaker_order: list[str] = []          # порядок выступлений на текущий день
+        self._speaker_order: list[str] = []
         self._current_speaker_index = 0
         self._current_speaker_id: Optional[str] = None
         self._player_nominated_during_speech = False
@@ -100,8 +101,7 @@ class GameSession:
         self.dead_chat_log: list[dict] = []
         self.mafia_chat_log: list[dict] = []
         self._timer_updater_task: Optional[asyncio.Task] = None
-        # Новые поля для порядка выступлений
-        self.shuffled_player_ids: list[str] = []     # фиксированный перемешанный порядок всех игроков
+        self.shuffled_player_ids: list[str] = []
 
     def _find_player_by_username(self, username: str) -> Optional[Player]:
         for p in self.players.values():
@@ -194,6 +194,8 @@ class GameSession:
     def add_player(self, user_id: str, username: str) -> Player:
         if user_id in self.players:
             raise ValueError("Игрок уже в игре")
+        if self.phase != GamePhase.WAITING:
+            raise ValueError("Игра уже началась, нельзя присоединиться")
         player = Player(user_id, username)
         self.players[user_id] = player
         if self.phase == GamePhase.WAITING:
@@ -222,20 +224,16 @@ class GameSession:
         logger.info("Roles assigned: %s", {p.username: p.role for p in self.players.values()})
 
     def _shuffle_players(self):
-        """Перемешиваем всех игроков – фиксированный порядок на всю партию."""
         all_ids = list(self.players.keys())
         random.shuffle(all_ids)
         self.shuffled_player_ids = all_ids
 
     def _update_speaker_order(self):
-        """Обновляет порядок выступлений на текущий день с учётом сдвига."""
-        # Берём живых игроков в том порядке, в котором они были в shuffled_player_ids
         live = [uid for uid in self.shuffled_player_ids if self.players[uid].is_alive]
         if not live:
             self._speaker_order = []
             self._current_speaker_index = 0
             return
-        # Сдвиг: в первый день offset = 0, во второй = 1, и т.д.
         offset = (self._day_number - 1) % len(live)
         self._speaker_order = live[offset:] + live[:offset]
         self._current_speaker_index = 0
@@ -243,7 +241,7 @@ class GameSession:
     async def _start_pre_game(self):
         await self._change_phase(GamePhase.PRE_GAME)
         self.assign_roles()
-        self._shuffle_players()          # фиксируем порядок игроков
+        self._shuffle_players()
         for player in self.players.values():
             player.is_alive = True
         story = await self._narrate("game_story", {})
@@ -261,8 +259,10 @@ class GameSession:
         await self._start_day()
 
     async def start_game(self):
+        if self.phase != GamePhase.WAITING:
+            raise ValueError("Игра уже началась")
         if len(self.players) < MIN_PLAYERS:
-            raise ValueError("Недостаточно игроков")
+            raise ValueError(f"Недостаточно игроков. Нужно минимум {MIN_PLAYERS}")
         await self._start_pre_game()
         await self.broadcast_game_state()
 
@@ -274,13 +274,11 @@ class GameSession:
         self.nominated_players.clear()
         self.votes.clear()
         self._vote_change_counts.clear()
-        # Обновляем порядок выступлений с учётом сдвига
         self._update_speaker_order()
         if not self._speaker_order:
             await self._check_win_condition()
             return
         await self._change_phase(GamePhase.DAY)
-        # Ведущий говорит только в начале дня (AI)
         text = await self._narrate("day_start", {"day_number": self._day_number})
         await self._broadcast_system(text)
         await self._add_history(text)
@@ -871,6 +869,7 @@ class GameSession:
             "nominated_players": self.nominated_players,
             "voting_targets": self.voting_targets,
             "current_speaker_id": self._current_speaker_id,
+            "owner_id": self.owner_id,
         }
 
     async def broadcast_game_state(self):

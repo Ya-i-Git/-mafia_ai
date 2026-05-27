@@ -13,12 +13,14 @@ export interface GameState {
   time_left: number;
   nominated_players: string[];
   voting_targets: string[];
+  current_speaker_id: string | null;
+  owner_id: string;          // добавлено
 }
 
 interface GameStore {
   gameState: GameState | null;
   currentRole: string | null;
-  setGameState: (state: GameState | null) => void;   // разрешаем null
+  setGameState: (state: GameState | null) => void;
   setCurrentRole: (role: string | null) => void;
 }
 

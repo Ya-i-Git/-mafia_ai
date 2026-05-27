@@ -9,7 +9,11 @@ export default function Lobby() {
   const { username } = useAuthStore();
 
   const createGame = async () => {
-    const res = await api.post('/lobby/create_game');
+    if (!username) {
+      alert('Ошибка: пользователь не авторизован');
+      return;
+    }
+    const res = await api.post('/lobby/create_game', { username });
     navigate(`/game/${res.data.game_id}`);
   };
 

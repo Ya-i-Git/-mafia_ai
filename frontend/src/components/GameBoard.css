@@ -96,3 +96,37 @@
 .night-action-btn:hover {
   background: #e67e22;
 }
+
+.waiting-lobby {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.lobby-container {
+  max-width: 800px;
+  margin: 0 auto;
+  background: rgba(0,0,0,0.7);
+  border-radius: 20px;
+  padding: 20px;
+  color: white;
+}
+
+.start-game-btn {
+  background: #00f3ff;
+  color: #000;
+  border: none;
+  padding: 12px 24px;
+  font-size: 1.2rem;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-top: 20px;
+  width: 100%;
+  font-weight: bold;
+}
+
+.start-game-btn:disabled {
+  background: #555;
+  cursor: not-allowed;
+  color: #ccc;
+}
