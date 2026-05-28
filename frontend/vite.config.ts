@@ -31,7 +31,6 @@ export default defineConfig(({ mode }) => {
           target: wsTarget,
           ws: true,
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/ws/, '/ws'),
           configure: (proxy, _options) => {
             proxy.on('error', (err, _req, _res) => {
               console.log('ws proxy error', err);

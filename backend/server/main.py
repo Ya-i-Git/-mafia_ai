@@ -1,3 +1,4 @@
+# backend/server/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.server.routers import auth, lobby, websocket, stats
@@ -5,6 +6,7 @@ from backend.server.services.game_manager import game_manager
 
 app = FastAPI(title="Mafia Game Server")
 
+# CORS для фронтенда (Vite на 3000, React на 5173)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -21,7 +23,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(lobby.router, prefix="/lobby", tags=["lobby"])
 app.include_router(websocket.router, tags=["websocket"])
-app.include_router(stats.router)
+app.include_router(stats.router, prefix="/stats", tags=["stats"])
 
 if __name__ == "__main__":
     import uvicorn

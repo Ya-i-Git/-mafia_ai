@@ -8,6 +8,7 @@ export interface GameState {
     username: string;
     is_alive: boolean;
     nominated: boolean;
+    number: number;
   }>;
   time_left: number;
   nominated_players: string[];
@@ -23,11 +24,13 @@ interface GameStore {
   donChecks: Record<string, boolean>;
   mafiaTeam: string[] | null;
   mafiaDon: string | null;
+  doctorLastHealTarget: string | null;
   setGameState: (state: GameState | null) => void;
   setCurrentRole: (role: string | null) => void;
   addSheriffCheck: (playerId: string, role: string) => void;
   addDonCheck: (playerId: string, isSheriff: boolean) => void;
   setMafiaTeam: (members: string[], don: string) => void;
+  setDoctorLastHealTarget: (targetId: string | null) => void;
   resetChecks: () => void;
 }
 
@@ -38,6 +41,7 @@ export const useGameStore = create<GameStore>((set) => ({
   donChecks: {},
   mafiaTeam: null,
   mafiaDon: null,
+  doctorLastHealTarget: null,
   setGameState: (state) => set({ gameState: state }),
   setCurrentRole: (role) => set({ currentRole: role }),
   addSheriffCheck: (playerId, role) => set((state) => ({
@@ -47,5 +51,6 @@ export const useGameStore = create<GameStore>((set) => ({
     donChecks: { ...state.donChecks, [playerId]: isSheriff }
   })),
   setMafiaTeam: (members, don) => set({ mafiaTeam: members, mafiaDon: don }),
-  resetChecks: () => set({ sheriffChecks: {}, donChecks: {} }),
+  setDoctorLastHealTarget: (targetId) => set({ doctorLastHealTarget: targetId }),
+  resetChecks: () => set({ sheriffChecks: {}, donChecks: {}, doctorLastHealTarget: null }),
 }));

@@ -9,6 +9,18 @@ import { useState, useEffect } from 'react';
 import api from '../services/api';
 import './GameBoard.css';
 
+// Функция для стикера роли – объявлена до использования
+const getRoleSticker = (role: string | null) => {
+  if (!role) return '👤';
+  switch (role) {
+    case 'mafia': return '🔪';
+    case 'don': return '👑';
+    case 'sheriff': return '🕵️';
+    case 'doctor': return '💉';
+    default: return '👤';
+  }
+};
+
 export default function GameBoard() {
   const { gameId } = useParams<{ gameId: string }>();
   const gameState = useGameStore((state) => state.gameState);
@@ -17,15 +29,23 @@ export default function GameBoard() {
   const donChecks = useGameStore((state) => state.donChecks);
   const mafiaTeam = useGameStore((state) => state.mafiaTeam);
   const mafiaDon = useGameStore((state) => state.mafiaDon);
+  const doctorLastHealTarget = useGameStore((state) => state.doctorLastHealTarget);
   const resetChecks = useGameStore((state) => state.resetChecks);
   const { username } = useAuthStore();
   const { sendMessage } = useWebSocket(gameId!);
   const addMessage = useChatStore((state) => state.addMessage);
   const [nominatedTargetId, setNominatedTargetId] = useState<string | null>(null);
   const [actionPerformed, setActionPerformed] = useState(false);
+  const [hasVoted, setHasVoted] = useState(false);
 
   useEffect(() => {
     setActionPerformed(false);
+  }, [gameState?.phase]);
+
+  useEffect(() => {
+    if (gameState?.phase === 'voting' || gameState?.phase === 'voting_tie') {
+      setHasVoted(false);
+    }
   }, [gameState?.phase]);
 
   useEffect(() => {
@@ -104,13 +124,18 @@ export default function GameBoard() {
             <Timer seconds={gameState.time_left ?? 0} onEnd={() => {}} />
           </div>
           <p>Игра начнётся через {gameState.time_left ?? 0} секунд...</p>
+          {currentRole && (
+            <div className="role-badge pre-game-role">
+              {getRoleSticker(currentRole)} {currentRole}
+            </div>
+          )}
           <div className="players-list">
             <h3>Участники ({gameState.players?.length ?? 0})</h3>
             <div className="players-grid">
-              {(gameState.players ?? []).map((p, idx) => (
+              {(gameState.players ?? []).map((p) => (
                 <div key={p.id} className="player-card">
                   <div className="player-name">
-                    <span className="player-number">{idx + 1}.</span> {p.username}
+                    <span className="player-number">{p.number}.</span> {p.username}
                   </div>
                 </div>
               ))}
@@ -131,22 +156,13 @@ export default function GameBoard() {
   }
 
   // ОСНОВНАЯ ИГРА
-  const getRoleSticker = (role: string | null) => {
-    if (!role) return '👤';
-    switch (role) {
-      case 'mafia': return '🔪';
-      case 'don': return '👑';
-      case 'sheriff': return '🕵️';
-      case 'doctor': return '💉';
-      default: return '👤';
-    }
-  };
-
   const currentPlayer = gameState.players?.find(p => p.username === username);
   const isAlive = currentPlayer?.is_alive === true;
   const isActiveSpeaker = gameState.current_speaker_id === currentPlayer?.id;
   const isDefensePhase = gameState.phase === 'defense' || gameState.phase === 'defense_tie';
   const isCurrentDefender = isDefensePhase && gameState.current_speaker_id === currentPlayer?.id;
+  const isLastWords = gameState.phase === 'last_words';
+  const isCurrentLastWords = isLastWords && gameState.current_speaker_id === currentPlayer?.id;
 
   const getActionTitle = () => {
     const phase = gameState.phase;
@@ -187,7 +203,7 @@ export default function GameBoard() {
   };
 
   const handleEndTurn = () => {
-    if (!isAlive) return;
+    if (!isAlive && !isCurrentLastWords) return;
     sendMessage({ type: 'end_turn' });
   };
 
@@ -199,6 +215,7 @@ export default function GameBoard() {
     const target = gameState.players?.find(p => p.id === targetId);
     if (target && target.id !== currentPlayer?.id) {
       sendMessage({ type: 'vote', target: target.username });
+      setHasVoted(true);
     } else {
       addMessage('common', { text: 'Нельзя голосовать за себя.', username: 'Система', timestamp: new Date() });
     }
@@ -210,12 +227,12 @@ export default function GameBoard() {
       return;
     }
     const target = gameState.players?.find(p => p.id === targetId);
-    if (target && target.id !== currentPlayer?.id) {
+    if (target && target.id !== currentPlayer?.id && target.is_alive) {
       sendMessage({ type: 'nominate', target: target.username });
       setNominatedTargetId(targetId);
       setTimeout(() => setNominatedTargetId(null), 2000);
     } else {
-      addMessage('common', { text: 'Нельзя выдвигать себя.', username: 'Система', timestamp: new Date() });
+      addMessage('common', { text: 'Нельзя выдвигать мёртвого или себя.', username: 'Система', timestamp: new Date() });
     }
   };
 
@@ -293,9 +310,10 @@ export default function GameBoard() {
             {isAlive && <span className="alive-badge">❤️ Жив</span>}
           </div>
         </div>
-        {(isAlive && ((gameState.phase === 'day' || gameState.phase === 'nomination') && isActiveSpeaker) || isCurrentDefender) && (
+        {((isAlive && ((gameState.phase === 'day' || gameState.phase === 'nomination') && isActiveSpeaker)) || 
+          isCurrentDefender || isCurrentLastWords) && (
           <button className="end-turn-btn" onClick={handleEndTurn}>
-            ⏩ {isCurrentDefender ? 'Пропустить речь' : 'Завершить речь'}
+            ⏩ {isCurrentLastWords ? 'Завершить прощание' : (isCurrentDefender ? 'Пропустить речь' : 'Завершить речь')}
           </button>
         )}
       </div>
@@ -320,29 +338,28 @@ export default function GameBoard() {
           <span className="phase-indicator">{getPhaseIcon(gameState.phase)}</span>
         </h3>
         <div className="players-grid">
-          {(gameState.players ?? []).map((p, idx) => {
+          {(gameState.players ?? []).map((p) => {
             const isCurrent = p.id === currentPlayer?.id;
             const isDead = p.is_alive === false;
             const isNominatedByMe = nominatedTargetId === p.id;
-
-            // Вычисляем возможность голосования и номинации для этого игрока
-            const canVote = isVotingPhase && isAlive && currentPlayer && 
-                            gameState.voting_targets?.includes(p.id) && p.id !== currentPlayer.id;
-            const canNominate = isNominationPhase && isAlive && isActiveSpeaker && p.id !== currentPlayer?.id;
+            // Вычисляем canVote и canNominate для каждого игрока
+            const canVoteForThis = isVotingPhase && isAlive && currentPlayer && 
+                                    gameState.voting_targets?.includes(p.id) && !hasVoted;
+            const canNominateThis = isNominationPhase && isAlive && isActiveSpeaker && !isDead && !p.nominated;
 
             return (
               <div key={p.id} className={`player-card ${isDead ? 'dead' : 'alive'} ${isCurrent ? 'current' : ''}`}>
                 <div className="player-name">
-                  <span className="player-number">{idx + 1}.</span> {p.username} {isCurrent && '(Вы)'}
+                  <span className="player-number">{p.number}.</span> {p.username} {isCurrent && '(Вы)'}
                   {p.nominated && <span className="nominated-mark">📢</span>}
                 </div>
                 <div className="player-actions">
-                  {canVote && (
+                  {canVoteForThis && (
                     <button onClick={() => handleVote(p.id)} className="vote-btn">
                       🗳️ Голосовать
                     </button>
                   )}
-                  {canNominate && (
+                  {canNominateThis && (
                     <button
                       onClick={() => handleNominate(p.id)}
                       className={`nominate-btn ${isNominatedByMe ? 'active' : ''}`}
@@ -375,11 +392,17 @@ export default function GameBoard() {
                     {p.username}
                   </button>
                 ))
-              : gameState.players?.filter(p => p.is_alive && p.id !== currentPlayer?.id).map(p => (
-                  <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
-                    {p.username}
-                  </button>
-                ))}
+              : nightActionType === 'heal'
+                ? gameState.players?.filter(p => p.is_alive && p.id !== doctorLastHealTarget).map(p => (
+                    <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
+                      {p.username}
+                    </button>
+                  ))
+                : gameState.players?.filter(p => p.is_alive && p.id !== currentPlayer?.id).map(p => (
+                    <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
+                      {p.username}
+                    </button>
+                  ))}
           </div>
         </div>
       )}

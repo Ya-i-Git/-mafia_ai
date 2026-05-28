@@ -21,11 +21,24 @@ export default function ChatTabs({ isAlive, role, phase, onSendMessage }: ChatTa
   const showDeadTab = !isAlive && !isLobby;
   const showNightTab = (role === 'mafia' || role === 'don') && phase === 'night_mafia';
 
+  // Для мёртвых игроков: объединяем common + night (если мафия)
+  const getMergedMessages = () => {
+    if (!isAlive) {
+      let merged = [...messages.common];
+      if (role === 'mafia' || role === 'don') {
+        merged = [...merged, ...messages.night];
+      }
+      // Сортируем по времени (старые сверху)
+      return merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    }
+    return messages[activeTab];
+  };
+
   useEffect(() => {
     if (autoScrollRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages[activeTab]]);
+  }, [isAlive ? messages[activeTab] : getMergedMessages()]);
 
   const handleScroll = () => {
     const container = chatMessagesRef.current;
@@ -43,6 +56,35 @@ export default function ChatTabs({ isAlive, role, phase, onSendMessage }: ChatTa
     autoScrollRef.current = true;
   };
 
+  // Для мёртвых игроков не показываем вкладки
+  if (!isAlive && !isLobby) {
+    const merged = getMergedMessages();
+    return (
+      <div className="chat-container">
+        <div className="chat-messages" ref={chatMessagesRef} onScroll={handleScroll}>
+          {merged.map((msg, idx) => (
+            <div key={idx} className={`chat-message ${msg.username === 'Вы' ? 'own' : ''}`}>
+              <strong>{msg.username}:</strong> {msg.text}
+              <small>{new Date(msg.timestamp).toLocaleTimeString()}</small>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+        <div className="chat-input">
+          <input
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            placeholder="Введите сообщение..."
+          />
+          <button onClick={handleSend}>Отправить</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Живые игроки (или лобби) – обычные вкладки
   return (
     <div className="chat-container">
       {!isLobby && (
