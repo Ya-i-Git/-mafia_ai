@@ -15,16 +15,18 @@ async def game_websocket(websocket: WebSocket, game_id: str, username: str = Que
         await websocket.close(code=4001, reason="Not in lobby")
         return
     await websocket.accept()
-    # Обновляем websocket при переподключении
     player.websocket = websocket
-    # Если игрок мёртв, отправляем ему историю чата мёртвых
-    if not player.is_alive and game.phase != GamePhase.WAITING:
-        await game._send_dead_history(player.user_id)
-    role_text = player.role.value if game.phase != GamePhase.WAITING else "не назначена"
-    await game.send_personal({"type": "system", "text": f"Добро пожаловать, {username}. Игра {game_id}. Ваша роль: {role_text}."}, player.user_id)
+
+    await game.send_personal({"type": "system", "text": f"Добро пожаловать, {username}."}, player.user_id)
+
     if game.phase != GamePhase.WAITING:
         await game.send_personal({"type": "role_assigned", "role": player.role.value}, player.user_id)
-    await game.send_personal({"type": "game_state", "state": game.get_game_state()}, player.user_id)
+        if not player.is_alive:
+            await game._send_dead_history(player.user_id)
+        await game.broadcast_game_state()   # Убрали for_user_id
+    else:
+        await game.broadcast_game_state()   # Убрали for_user_id
+
     try:
         while True:
             data = await websocket.receive_json()

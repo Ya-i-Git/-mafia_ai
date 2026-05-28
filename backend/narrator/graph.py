@@ -1,9 +1,7 @@
 import os
 from pathlib import Path
-from typing import Literal
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from backend.narrator.schemas import NarratorState
@@ -31,6 +29,10 @@ def get_event_prompt_template(event_type: str, world: str) -> str:
     return prompts["events"].get(event_type, "Расскажи о событии: {event_type}.")
 
 def select_prompt(state: NarratorState) -> NarratorState:
+    # Инициализируем messages, если его нет
+    if "messages" not in state or state["messages"] is None:
+        state["messages"] = []
+
     system_text = get_system_prompt(state["world"])
     event_template = get_event_prompt_template(state["event_type"], state["world"])
     event_message = event_template.format(
@@ -40,10 +42,10 @@ def select_prompt(state: NarratorState) -> NarratorState:
         history=state["history"],
         daily_fact=state.get("daily_fact", "")
     )
-    state["messages"] = [
+    state["messages"].extend([
         SystemMessage(content=system_text),
         HumanMessage(content=event_message)
-    ]
+    ])
     return state
 
 def call_model(state: NarratorState) -> NarratorState:
@@ -66,9 +68,6 @@ def validate(state: NarratorState) -> NarratorState:
             state["response"] = "Ведущий хранит молчание..."
             return state
     return state
-
-def should_validate(world: str) -> bool:
-    return True
 
 def create_narrator_graph(validate_output: bool = True) -> StateGraph:
     builder = StateGraph(NarratorState)

@@ -1,4 +1,3 @@
-// frontend/src/components/GameBoard.tsx
 import { useParams } from 'react-router-dom';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useGameStore } from '../stores/gameStore';
@@ -6,7 +5,7 @@ import { useChatStore } from '../stores/chatStore';
 import { useAuthStore } from '../stores/authStore';
 import ChatTabs from './ChatTabs';
 import Timer from './Timer';
-import { useEffect, useState, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../services/api';
 import './GameBoard.css';
 
@@ -14,14 +13,26 @@ export default function GameBoard() {
   const { gameId } = useParams<{ gameId: string }>();
   const gameState = useGameStore((state) => state.gameState);
   const currentRole = useGameStore((state) => state.currentRole);
+  const sheriffChecks = useGameStore((state) => state.sheriffChecks);
+  const donChecks = useGameStore((state) => state.donChecks);
+  const mafiaTeam = useGameStore((state) => state.mafiaTeam);
+  const mafiaDon = useGameStore((state) => state.mafiaDon);
+  const resetChecks = useGameStore((state) => state.resetChecks);
   const { username } = useAuthStore();
   const { sendMessage } = useWebSocket(gameId!);
   const addMessage = useChatStore((state) => state.addMessage);
-
-  const [displayTime, setDisplayTime] = useState<number>(0);
   const [nominatedTargetId, setNominatedTargetId] = useState<string | null>(null);
-  const timerIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastServerTimeRef = useRef<number | null>(null);
+  const [actionPerformed, setActionPerformed] = useState(false);
+
+  useEffect(() => {
+    setActionPerformed(false);
+  }, [gameState?.phase]);
+
+  useEffect(() => {
+    if (currentRole) {
+      resetChecks();
+    }
+  }, [currentRole, resetChecks]);
 
   const handleStartGame = async () => {
     if (!gameState || gameState.phase !== 'waiting') return;
@@ -33,37 +44,11 @@ export default function GameBoard() {
     }
   };
 
-  useEffect(() => {
-    if (!gameState || gameState.time_left === undefined) return;
-    const serverTime = gameState.time_left;
-    if (lastServerTimeRef.current !== serverTime) {
-      lastServerTimeRef.current = serverTime;
-      setDisplayTime(serverTime);
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      if (serverTime > 0) {
-        timerIntervalRef.current = setInterval(() => {
-          setDisplayTime((prev) => {
-            const next = prev - 1;
-            if (next <= 0) {
-              if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-              timerIntervalRef.current = null;
-              return 0;
-            }
-            return next;
-          });
-        }, 1000);
-      }
-    }
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    };
-  }, [gameState?.time_left, gameState?.phase]);
-
   if (!gameState) {
     return <div className="loading">Загрузка игры...</div>;
   }
 
-  // === ЛОББИ (ожидание игроков) ===
+  // ЛОББИ
   if (gameState.phase === 'waiting') {
     const isOwner = gameState.owner_id === username;
     const minPlayers = 6;
@@ -101,7 +86,7 @@ export default function GameBoard() {
             phase={gameState.phase}
             onSendMessage={(text, chatType) => {
               sendMessage({ type: 'chat', text, chatType });
-              addMessage(chatType as any, { text, username: 'Вы', timestamp: new Date() });
+              addMessage('common', { text, username: 'Вы', timestamp: new Date() });
             }}
           />
         </div>
@@ -109,7 +94,43 @@ export default function GameBoard() {
     );
   }
 
-  // === ИГРОВОЙ ПРОЦЕСС (остальной код) ===
+  // ПРЕДЫГРОВАЯ ФАЗА
+  if (gameState.phase === 'pre_game') {
+    return (
+      <div className="game-board pre-game">
+        <div className="pre-game-container">
+          <h2>Игра #{gameId}</h2>
+          <div className="pre-game-timer">
+            <Timer seconds={gameState.time_left ?? 0} onEnd={() => {}} />
+          </div>
+          <p>Игра начнётся через {gameState.time_left ?? 0} секунд...</p>
+          <div className="players-list">
+            <h3>Участники ({gameState.players?.length ?? 0})</h3>
+            <div className="players-grid">
+              {(gameState.players ?? []).map((p, idx) => (
+                <div key={p.id} className="player-card">
+                  <div className="player-name">
+                    <span className="player-number">{idx + 1}.</span> {p.username}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <ChatTabs
+            isAlive={false}
+            role={null}
+            phase={gameState.phase}
+            onSendMessage={(text, chatType) => {
+              sendMessage({ type: 'chat', text, chatType });
+              addMessage('common', { text, username: 'Вы', timestamp: new Date() });
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ОСНОВНАЯ ИГРА
   const getRoleSticker = (role: string | null) => {
     if (!role) return '👤';
     switch (role) {
@@ -121,10 +142,40 @@ export default function GameBoard() {
     }
   };
 
-  const isPreGame = gameState.phase === 'pre_game';
   const currentPlayer = gameState.players?.find(p => p.username === username);
   const isAlive = currentPlayer?.is_alive === true;
   const isActiveSpeaker = gameState.current_speaker_id === currentPlayer?.id;
+  const isDefensePhase = gameState.phase === 'defense' || gameState.phase === 'defense_tie';
+  const isCurrentDefender = isDefensePhase && gameState.current_speaker_id === currentPlayer?.id;
+
+  const getActionTitle = () => {
+    const phase = gameState.phase;
+    const speaker = gameState.players?.find(p => p.id === gameState.current_speaker_id);
+    switch (phase) {
+      case 'day':
+        return speaker ? `🎤 Сейчас речь: ${speaker.username}` : 'Дневное обсуждение';
+      case 'nomination':
+        return '⏳ Дополнительное время на номинирование';
+      case 'defense':
+      case 'defense_tie':
+        return speaker ? `🛡️ Защищается: ${speaker.username}` : 'Защита';
+      case 'voting':
+      case 'voting_tie':
+        return '🗳️ Голосование';
+      case 'last_words':
+        return speaker ? `💀 Последнее слово: ${speaker.username}` : 'Последнее слово';
+      case 'night_mafia':
+        return '🔪 Ход Мафии';
+      case 'night_don':
+        return '👑 Ход Дона';
+      case 'night_sheriff':
+        return '🕵️ Ход Шерифа';
+      case 'night_doctor':
+        return '💉 Ход Доктора';
+      default:
+        return '';
+    }
+  };
 
   const handleSendChat = (text: string, chatType: string) => {
     sendMessage({ type: 'chat', text, chatType });
@@ -178,7 +229,7 @@ export default function GameBoard() {
   const isNominationPhase = (gameState.phase === 'day' || gameState.phase === 'nomination') && (gameState.day_number || 0) > 1;
 
   const isNightPhase = gameState.phase.startsWith('night');
-  const showNightActions = isNightPhase && isAlive && (
+  const showNightActions = isNightPhase && isAlive && !actionPerformed && (
     (gameState.phase === 'night_mafia' && (currentRole === 'mafia' || currentRole === 'don')) ||
     (gameState.phase === 'night_don' && currentRole === 'don') ||
     (gameState.phase === 'night_sheriff' && currentRole === 'sheriff') ||
@@ -201,55 +252,37 @@ export default function GameBoard() {
     actionLabel = '💉 Вылечить';
   }
 
+  const getCheckablePlayers = () => {
+    if (!gameState.players) return [];
+    if (currentRole === 'sheriff') {
+      const checkedIds = Object.keys(sheriffChecks);
+      return gameState.players.filter(p => p.is_alive && p.id !== currentPlayer?.id && !checkedIds.includes(p.id));
+    }
+    if (currentRole === 'don') {
+      const checkedIds = Object.keys(donChecks);
+      return gameState.players.filter(p => p.is_alive && p.id !== currentPlayer?.id && !checkedIds.includes(p.id));
+    }
+    return [];
+  };
+
   const handleNightAction = (targetId: string) => {
     if (!nightActionType) return;
     const target = gameState.players?.find(p => p.id === targetId);
     if (target && target.id !== currentPlayer?.id && target.is_alive) {
       sendMessage({ type: 'action', action: nightActionType, target: target.username });
       addMessage('common', { text: `Вы выбрали ${target.username} для ${actionLabel}`, username: 'Система', timestamp: new Date() });
+      setActionPerformed(true);
     } else {
       addMessage('common', { text: 'Неверная цель', username: 'Система', timestamp: new Date() });
     }
   };
-
-  if (isPreGame) {
-    return (
-      <div className="game-board pre-game">
-        <div className="pre-game-container">
-          <h2>Игра #{gameId}</h2>
-          <div className="pre-game-timer">
-            <Timer seconds={displayTime} onEnd={() => {}} />
-          </div>
-          <p>Игра начнётся через {displayTime} секунд...</p>
-          <div className="players-list">
-            <h3>Участники ({gameState.players?.length ?? 0})</h3>
-            <div className="players-grid">
-              {(gameState.players ?? []).map((p, idx) => (
-                <div key={p.id} className="player-card">
-                  <div className="player-name">
-                    <span className="player-number">{idx + 1}.</span> {p.username}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <ChatTabs
-            isAlive={false}
-            role={null}
-            phase={gameState.phase}
-            onSendMessage={handleSendChat}
-          />
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="game-board">
       <div className="game-header">
         <h2>Игра #{gameId}</h2>
         <div className="game-status">
-          <Timer seconds={displayTime} onEnd={() => {}} />
+          <Timer seconds={gameState.time_left ?? 0} onEnd={() => {}} />
           <div className="player-status">
             {currentRole && (
               <span className="role-badge">
@@ -260,12 +293,26 @@ export default function GameBoard() {
             {isAlive && <span className="alive-badge">❤️ Жив</span>}
           </div>
         </div>
-        {isAlive && (gameState.phase === 'day' || gameState.phase === 'nomination') && isActiveSpeaker && (
+        {(isAlive && ((gameState.phase === 'day' || gameState.phase === 'nomination') && isActiveSpeaker) || isCurrentDefender) && (
           <button className="end-turn-btn" onClick={handleEndTurn}>
-            ⏩ Завершить речь
+            ⏩ {isCurrentDefender ? 'Пропустить речь' : 'Завершить речь'}
           </button>
         )}
       </div>
+
+      {/* Информация о мафии для мафии и дона */}
+      {currentRole === 'mafia' && mafiaTeam && (
+        <div className="mafia-info">
+          🔪 Союзники: {mafiaTeam.join(', ')} {mafiaDon && `(Дон: ${mafiaDon})`}
+        </div>
+      )}
+      {currentRole === 'don' && mafiaTeam && (
+        <div className="mafia-info">
+          👑 Вы — дон. Ваша команда: {mafiaTeam.filter(m => m !== username).join(', ')}
+        </div>
+      )}
+
+      <div className="action-title">{getActionTitle()}</div>
 
       <div className="players-list">
         <h3>
@@ -276,9 +323,12 @@ export default function GameBoard() {
           {(gameState.players ?? []).map((p, idx) => {
             const isCurrent = p.id === currentPlayer?.id;
             const isDead = p.is_alive === false;
-            const canVote = isVotingPhase && !isDead && !isCurrent && isAlive;
-            const canNominate = isNominationPhase && !isDead && !isCurrent && isAlive;
             const isNominatedByMe = nominatedTargetId === p.id;
+
+            // Вычисляем возможность голосования и номинации для этого игрока
+            const canVote = isVotingPhase && isAlive && currentPlayer && 
+                            gameState.voting_targets?.includes(p.id) && p.id !== currentPlayer.id;
+            const canNominate = isNominationPhase && isAlive && isActiveSpeaker && p.id !== currentPlayer?.id;
 
             return (
               <div key={p.id} className={`player-card ${isDead ? 'dead' : 'alive'} ${isCurrent ? 'current' : ''}`}>
@@ -301,6 +351,14 @@ export default function GameBoard() {
                     </button>
                   )}
                 </div>
+                {currentRole === 'sheriff' && sheriffChecks[p.id] && (
+                  <div className="check-badge">🔍 {sheriffChecks[p.id]}</div>
+                )}
+                {currentRole === 'don' && donChecks[p.id] !== undefined && (
+                  <div className="don-check">
+                    {donChecks[p.id] ? '🕵️' : '❌'}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -311,11 +369,17 @@ export default function GameBoard() {
         <div className="night-actions">
           <h4>{actionLabel}</h4>
           <div className="players-grid">
-            {gameState.players?.filter(p => p.is_alive && p.id !== currentPlayer?.id).map(p => (
-              <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
-                {p.username}
-              </button>
-            ))}
+            {nightActionType === 'check' 
+              ? getCheckablePlayers().map(p => (
+                  <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
+                    {p.username}
+                  </button>
+                ))
+              : gameState.players?.filter(p => p.is_alive && p.id !== currentPlayer?.id).map(p => (
+                  <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
+                    {p.username}
+                  </button>
+                ))}
           </div>
         </div>
       )}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -14,27 +14,14 @@ class RegisterRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
 
-class UserResponse(BaseModel):
-    username: str
-    id: str
-
+# Временное хранилище пользователей (в реальном проекте – БД)
 users_db = {}
-
-# Вспомогательная функция для получения текущего пользователя по токену
-def get_current_user(authorization: str = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing token")
-    token = authorization.split(" ")[1]
-    # У нас токен = username
-    if token not in users_db:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return token
 
 @router.post("/login", response_model=AuthResponse)
 async def login(body: LoginRequest):
     if body.username not in users_db or users_db[body.username] != body.password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return AuthResponse(token=body.username)
+    return AuthResponse(token=body.username)  # token = username (упрощённо)
 
 @router.post("/register", response_model=AuthResponse)
 async def register(body: RegisterRequest):
@@ -43,6 +30,16 @@ async def register(body: RegisterRequest):
     users_db[body.username] = body.password
     return AuthResponse(token=body.username)
 
-@router.get("/me", response_model=UserResponse)
-async def get_me(current_user: str = Depends(get_current_user)):
-    return UserResponse(username=current_user, id=current_user)
+@router.get("/me")
+async def me(authorization: str = Header(...)):
+    """
+    Возвращает информацию о текущем пользователе по Bearer token.
+    Токен – это просто username (упрощённо).
+    """
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid token format")
+    username = parts[1]
+    if username not in users_db:
+        raise HTTPException(status_code=401, detail="User not found")
+    return {"username": username}
