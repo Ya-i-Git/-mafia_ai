@@ -5,6 +5,8 @@ class Player:
         self.user_id = user_id
         self.username = username
         self.role = role
+        self.number = 0 # номер игрока (порядок речей)
         self.is_alive = True
         self.nominated = False
         self.websocket = None
+                  

@@ -10,6 +10,7 @@ export function useWebSocket(gameId: string) {
   const addSheriffCheck = useGameStore((state) => state.addSheriffCheck);
   const addDonCheck = useGameStore((state) => state.addDonCheck);
   const setMafiaTeam = useGameStore((state) => state.setMafiaTeam);
+  const setDoctorLastHealTarget = useGameStore((state) => state.setDoctorLastHealTarget);
   const addMessage = useChatStore((state) => state.addMessage);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -33,8 +34,13 @@ export function useWebSocket(gameId: string) {
           setGameState(data.state);
         } else if (data.type === 'role_assigned') {
           setCurrentRole(data.role);
+        } else if (data.type === 'player_number') {
+          // можно сохранить в store, если нужно отображать номер игрока где-то ещё
+          // пока не используем, но можно добавить
         } else if (data.type === 'mafia_team') {
           setMafiaTeam(data.members, data.don);
+        } else if (data.type === 'doctor_last_heal') {
+          setDoctorLastHealTarget(data.target_id);
         } else if (data.type === 'system') {
           const sheriffMatch = data.text.match(/Проверка (.+?): роль (мафия|мирный)/);
           if (sheriffMatch) {
@@ -71,7 +77,7 @@ export function useWebSocket(gameId: string) {
         ws.close();
       }
     };
-  }, [username, gameId, setGameState, setCurrentRole, addSheriffCheck, addDonCheck, setMafiaTeam, addMessage]);
+  }, [username, gameId, setGameState, setCurrentRole, addSheriffCheck, addDonCheck, setMafiaTeam, setDoctorLastHealTarget, addMessage]);
 
   const sendMessage = useCallback((message: object) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

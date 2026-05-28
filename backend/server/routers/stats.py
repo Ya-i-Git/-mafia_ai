@@ -1,36 +1,48 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from datetime import datetime, timedelta
+import random
 
-router = APIRouter(prefix="/stats", tags=["stats"])
+router = APIRouter()
 
 @router.get("/global")
 async def global_stats():
+    # Заглушка – генерируем случайные данные для демонстрации
+    roles = ["mafia", "don", "sheriff", "doctor", "civilian"]
+    winrate_by_role = {role: round(random.uniform(30, 70), 1) for role in roles}
+    
+    # Последние 7 дней
+    today = datetime.now().date()
+    games_per_day = []
+    for i in range(6, -1, -1):
+        date = today - timedelta(days=i)
+        games_per_day.append({
+            "date": date.strftime("%Y-%m-%d"),
+            "count": random.randint(1, 20)
+        })
+    
+    top_players = [
+        {"username": "Игрок1", "wins": random.randint(5, 30)},
+        {"username": "Игрок2", "wins": random.randint(5, 30)},
+        {"username": "Игрок3", "wins": random.randint(5, 30)},
+    ]
+    
     return {
-        "winrateByRole": {
-            "mafia": 48.5,
-            "don": 52.1,
-            "sheriff": 49.3,
-            "doctor": 50.2,
-            "civilian": 45.8,
-        },
-        "gamesPerDay": [
-            {"date": "2025-01-01", "count": 12},
-            {"date": "2025-01-02", "count": 18},
-            {"date": "2025-01-03", "count": 14},
-        ],
-        "averageGameDuration": 1860,  # секунд
-        "topPlayers": [
-            {"username": "Alice", "wins": 42},
-            {"username": "Bob", "wins": 38},
-            {"username": "Charlie", "wins": 35},
-        ],
+        "winrateByRole": winrate_by_role,
+        "gamesPerDay": games_per_day,
+        "averageGameDuration": random.randint(15, 45) * 60,  # секунды
+        "topPlayers": top_players
     }
 
 @router.get("/user/{username}")
 async def user_stats(username: str):
+    # Заглушка – если пользователь существует в базе (имитируем)
+    # В реальности нужно проверять в БД
+    if username == "":
+        raise HTTPException(status_code=404, detail="Player not found")
     return {
-        "totalGames": 23,
-        "wins": 12,
-        "losses": 11,
-        "firstGuessAccuracy": 67,
-        "favoriteRole": "sheriff",
+        "totalGames": random.randint(1, 100),
+        "wins": random.randint(0, 50),
+        "losses": random.randint(0, 50),
+        "firstGuessAccuracy": round(random.uniform(0, 100), 1),
+        "favoriteRole": random.choice(["mafia", "sheriff", "doctor", "civilian"])
     }
