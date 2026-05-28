@@ -5,11 +5,10 @@ import { useChatStore } from '../stores/chatStore';
 import { useAuthStore } from '../stores/authStore';
 import ChatTabs from './ChatTabs';
 import Timer from './Timer';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import api from '../services/api';
 import './GameBoard.css';
 
-// Функция для стикера роли – объявлена до использования
 const getRoleSticker = (role: string | null) => {
   if (!role) return '👤';
   switch (role) {
@@ -19,6 +18,11 @@ const getRoleSticker = (role: string | null) => {
     case 'doctor': return '💉';
     default: return '👤';
   }
+};
+
+const getSheriffIcon = (roleCheck: string) => {
+  if (roleCheck === 'мафия') return '🔪';
+  return '👤';
 };
 
 export default function GameBoard() {
@@ -37,6 +41,11 @@ export default function GameBoard() {
   const [nominatedTargetId, setNominatedTargetId] = useState<string | null>(null);
   const [actionPerformed, setActionPerformed] = useState(false);
   const [hasVoted, setHasVoted] = useState(false);
+
+  const sortedPlayers = useMemo(() => {
+    if (!gameState?.players) return [];
+    return [...gameState.players].sort((a, b) => (a.number || 0) - (b.number || 0));
+  }, [gameState?.players]);
 
   useEffect(() => {
     setActionPerformed(false);
@@ -64,15 +73,37 @@ export default function GameBoard() {
     }
   };
 
+  const getCurrentActionText = () => {
+    const phase = gameState?.phase;
+    const speaker = gameState?.players?.find(p => p.id === gameState.current_speaker_id);
+    switch (phase) {
+      case 'day': return speaker ? `🎤 Речь: ${speaker.username}` : 'Дневное обсуждение';
+      case 'nomination': return '⏳ Доп. время на номинирование';
+      case 'defense':
+      case 'defense_tie': return speaker ? `🛡️ Защищается: ${speaker.username}` : 'Защита';
+      case 'voting':
+      case 'voting_tie': return '🗳️ Голосование';
+      case 'last_words': return speaker ? `💀 Последнее слово: ${speaker.username}` : 'Последнее слово';
+      case 'night_mafia': return '🔪 Ход Мафии';
+      case 'night_don': return '👑 Ход Дона';
+      case 'night_sheriff': return '🕵️ Ход Шерифа';
+      case 'night_doctor': return '💉 Ход Доктора';
+      default: return '';
+    }
+  };
+
+  const isNightPhase = gameState?.phase?.startsWith('night') ?? false;
+  const bgClass = isNightPhase ? 'night-bg' : 'day-bg';
+
   if (!gameState) {
     return <div className="loading">Загрузка игры...</div>;
   }
 
-  // ЛОББИ
+  // Лобби
   if (gameState.phase === 'waiting') {
     const isOwner = gameState.owner_id === username;
     const minPlayers = 6;
-    const currentPlayers = gameState.players?.length ?? 0;
+    const currentPlayers = sortedPlayers.length;
     const canStart = isOwner && currentPlayers >= minPlayers;
 
     return (
@@ -82,7 +113,7 @@ export default function GameBoard() {
           <div className="players-list">
             <h3>Игроки ({currentPlayers} / {minPlayers}+)</h3>
             <div className="players-grid">
-              {(gameState.players ?? []).map((p, idx) => (
+              {sortedPlayers.map((p, idx) => (
                 <div key={p.id} className="player-card">
                   <div className="player-name">
                     {idx+1}. {p.username} {p.id === gameState.owner_id && '👑'}
@@ -92,11 +123,7 @@ export default function GameBoard() {
             </div>
           </div>
           {isOwner && (
-            <button 
-              className="start-game-btn" 
-              onClick={handleStartGame} 
-              disabled={!canStart}
-            >
+            <button className="start-game-btn" onClick={handleStartGame} disabled={!canStart}>
               {canStart ? 'Начать игру' : `Нужно ещё ${minPlayers - currentPlayers} игроков`}
             </button>
           )}
@@ -114,7 +141,7 @@ export default function GameBoard() {
     );
   }
 
-  // ПРЕДЫГРОВАЯ ФАЗА
+  // Предыгровая фаза
   if (gameState.phase === 'pre_game') {
     return (
       <div className="game-board pre-game">
@@ -130,9 +157,9 @@ export default function GameBoard() {
             </div>
           )}
           <div className="players-list">
-            <h3>Участники ({gameState.players?.length ?? 0})</h3>
+            <h3>Участники ({sortedPlayers.length})</h3>
             <div className="players-grid">
-              {(gameState.players ?? []).map((p) => (
+              {sortedPlayers.map((p) => (
                 <div key={p.id} className="player-card">
                   <div className="player-name">
                     <span className="player-number">{p.number}.</span> {p.username}
@@ -155,51 +182,19 @@ export default function GameBoard() {
     );
   }
 
-  // ОСНОВНАЯ ИГРА
-  const currentPlayer = gameState.players?.find(p => p.username === username);
+  // Основная игра
+  const currentPlayer = sortedPlayers.find(p => p.username === username);
   const isAlive = currentPlayer?.is_alive === true;
   const isActiveSpeaker = gameState.current_speaker_id === currentPlayer?.id;
   const isDefensePhase = gameState.phase === 'defense' || gameState.phase === 'defense_tie';
   const isCurrentDefender = isDefensePhase && gameState.current_speaker_id === currentPlayer?.id;
   const isLastWords = gameState.phase === 'last_words';
   const isCurrentLastWords = isLastWords && gameState.current_speaker_id === currentPlayer?.id;
-
-  const getActionTitle = () => {
-    const phase = gameState.phase;
-    const speaker = gameState.players?.find(p => p.id === gameState.current_speaker_id);
-    switch (phase) {
-      case 'day':
-        return speaker ? `🎤 Сейчас речь: ${speaker.username}` : 'Дневное обсуждение';
-      case 'nomination':
-        return '⏳ Дополнительное время на номинирование';
-      case 'defense':
-      case 'defense_tie':
-        return speaker ? `🛡️ Защищается: ${speaker.username}` : 'Защита';
-      case 'voting':
-      case 'voting_tie':
-        return '🗳️ Голосование';
-      case 'last_words':
-        return speaker ? `💀 Последнее слово: ${speaker.username}` : 'Последнее слово';
-      case 'night_mafia':
-        return '🔪 Ход Мафии';
-      case 'night_don':
-        return '👑 Ход Дона';
-      case 'night_sheriff':
-        return '🕵️ Ход Шерифа';
-      case 'night_doctor':
-        return '💉 Ход Доктора';
-      default:
-        return '';
-    }
-  };
+  const currentActionText = getCurrentActionText();
 
   const handleSendChat = (text: string, chatType: string) => {
     sendMessage({ type: 'chat', text, chatType });
-    addMessage(chatType as any, {
-      text,
-      username: 'Вы',
-      timestamp: new Date(),
-    });
+    addMessage(chatType as any, { text, username: 'Вы', timestamp: new Date() });
   };
 
   const handleEndTurn = () => {
@@ -212,7 +207,7 @@ export default function GameBoard() {
       addMessage('common', { text: 'Вы мертвы и не можете голосовать.', username: 'Система', timestamp: new Date() });
       return;
     }
-    const target = gameState.players?.find(p => p.id === targetId);
+    const target = sortedPlayers.find(p => p.id === targetId);
     if (target && target.id !== currentPlayer?.id) {
       sendMessage({ type: 'vote', target: target.username });
       setHasVoted(true);
@@ -226,7 +221,7 @@ export default function GameBoard() {
       addMessage('common', { text: 'Вы мертвы и не можете выдвигать.', username: 'Система', timestamp: new Date() });
       return;
     }
-    const target = gameState.players?.find(p => p.id === targetId);
+    const target = sortedPlayers.find(p => p.id === targetId);
     if (target && target.id !== currentPlayer?.id && target.is_alive) {
       sendMessage({ type: 'nominate', target: target.username });
       setNominatedTargetId(targetId);
@@ -236,17 +231,10 @@ export default function GameBoard() {
     }
   };
 
-  const getPhaseIcon = (phase: string) => {
-    if (phase === 'day') return '☀️ День';
-    if (phase.startsWith('night')) return '🌙 Ночь';
-    return phase;
-  };
-
   const isVotingPhase = gameState.phase === 'voting' || gameState.phase === 'voting_tie';
   const isNominationPhase = (gameState.phase === 'day' || gameState.phase === 'nomination') && (gameState.day_number || 0) > 1;
-
-  const isNightPhase = gameState.phase.startsWith('night');
-  const showNightActions = isNightPhase && isAlive && !actionPerformed && (
+  const isNightPhaseForActions = gameState.phase.startsWith('night');
+  const showNightActions = isNightPhaseForActions && isAlive && !actionPerformed && (
     (gameState.phase === 'night_mafia' && (currentRole === 'mafia' || currentRole === 'don')) ||
     (gameState.phase === 'night_don' && currentRole === 'don') ||
     (gameState.phase === 'night_sheriff' && currentRole === 'sheriff') ||
@@ -270,21 +258,21 @@ export default function GameBoard() {
   }
 
   const getCheckablePlayers = () => {
-    if (!gameState.players) return [];
+    if (!sortedPlayers) return [];
     if (currentRole === 'sheriff') {
       const checkedIds = Object.keys(sheriffChecks);
-      return gameState.players.filter(p => p.is_alive && p.id !== currentPlayer?.id && !checkedIds.includes(p.id));
+      return sortedPlayers.filter(p => p.is_alive && p.id !== currentPlayer?.id && !checkedIds.includes(p.id));
     }
     if (currentRole === 'don') {
       const checkedIds = Object.keys(donChecks);
-      return gameState.players.filter(p => p.is_alive && p.id !== currentPlayer?.id && !checkedIds.includes(p.id));
+      return sortedPlayers.filter(p => p.is_alive && p.id !== currentPlayer?.id && !checkedIds.includes(p.id));
     }
     return [];
   };
 
   const handleNightAction = (targetId: string) => {
     if (!nightActionType) return;
-    const target = gameState.players?.find(p => p.id === targetId);
+    const target = sortedPlayers.find(p => p.id === targetId);
     if (target && target.id !== currentPlayer?.id && target.is_alive) {
       sendMessage({ type: 'action', action: nightActionType, target: target.username });
       addMessage('common', { text: `Вы выбрали ${target.username} для ${actionLabel}`, username: 'Система', timestamp: new Date() });
@@ -295,87 +283,74 @@ export default function GameBoard() {
   };
 
   return (
-    <div className="game-board">
+    <div className={`game-board ${bgClass}`}>
       <div className="game-header">
-        <h2>Игра #{gameId}</h2>
-        <div className="game-status">
-          <Timer seconds={gameState.time_left ?? 0} onEnd={() => {}} />
-          <div className="player-status">
-            {currentRole && (
-              <span className="role-badge">
-                {getRoleSticker(currentRole)} {currentRole}
-              </span>
-            )}
-            {!isAlive && <span className="dead-badge">💀 Мёртв</span>}
-            {isAlive && <span className="alive-badge">❤️ Жив</span>}
-          </div>
+        <div className="player-role-display">
+          {currentRole && <span className="role-badge">{getRoleSticker(currentRole)} {currentRole}</span>}
+          {!isAlive && <span className="dead-badge">💀 Мёртв</span>}
+          {isAlive && <span className="alive-badge">❤️ Жив</span>}
         </div>
-        {((isAlive && ((gameState.phase === 'day' || gameState.phase === 'nomination') && isActiveSpeaker)) || 
-          isCurrentDefender || isCurrentLastWords) && (
-          <button className="end-turn-btn" onClick={handleEndTurn}>
-            ⏩ {isCurrentLastWords ? 'Завершить прощание' : (isCurrentDefender ? 'Пропустить речь' : 'Завершить речь')}
-          </button>
-        )}
+        <div className="current-action">{currentActionText}</div>
+        <div className="timer-display"><Timer seconds={gameState.time_left ?? 0} onEnd={() => {}} /></div>
       </div>
 
-      {/* Информация о мафии для мафии и дона */}
-      {currentRole === 'mafia' && mafiaTeam && (
-        <div className="mafia-info">
-          🔪 Союзники: {mafiaTeam.join(', ')} {mafiaDon && `(Дон: ${mafiaDon})`}
-        </div>
-      )}
-      {currentRole === 'don' && mafiaTeam && (
-        <div className="mafia-info">
-          👑 Вы — дон. Ваша команда: {mafiaTeam.filter(m => m !== username).join(', ')}
-        </div>
+      {((isAlive && ((gameState.phase === 'day' || gameState.phase === 'nomination') && isActiveSpeaker)) || 
+        isCurrentDefender || isCurrentLastWords) && (
+        <button className="end-turn-btn" onClick={handleEndTurn}>
+          ⏩ {isCurrentLastWords ? 'Завершить прощание' : (isCurrentDefender ? 'Пропустить речь' : 'Завершить речь')}
+        </button>
       )}
 
-      <div className="action-title">{getActionTitle()}</div>
+      {/* Текстовые сообщения о союзниках УДАЛЕНЫ */}
 
       <div className="players-list">
-        <h3>
-          Игроки
-          <span className="phase-indicator">{getPhaseIcon(gameState.phase)}</span>
-        </h3>
+        <h3>Игроки <span className="phase-indicator">{gameState.phase === 'day' ? '☀️ День' : '🌙 Ночь'}</span></h3>
         <div className="players-grid">
-          {(gameState.players ?? []).map((p) => {
+          {sortedPlayers.map((p) => {
             const isCurrent = p.id === currentPlayer?.id;
             const isDead = p.is_alive === false;
             const isNominatedByMe = nominatedTargetId === p.id;
-            // Вычисляем canVote и canNominate для каждого игрока
-            const canVoteForThis = isVotingPhase && isAlive && currentPlayer && 
-                                    gameState.voting_targets?.includes(p.id) && !hasVoted;
+            const canVoteForThis = isVotingPhase && isAlive && currentPlayer && gameState.voting_targets?.includes(p.id) && !hasVoted;
             const canNominateThis = isNominationPhase && isAlive && isActiveSpeaker && !isDead && !p.nominated;
+
+            let mafiaAllyIcon = null;
+            // Показываем значок союзника для мафии и дона
+            if ((currentRole === 'mafia' || currentRole === 'don') && mafiaTeam && p.username !== username) {
+              if (mafiaTeam.includes(p.username)) {
+                const isDon = p.username === mafiaDon;
+                mafiaAllyIcon = (
+                  <span className="mafia-ally-badge" title={isDon ? "Дон" : "Союзник"}>
+                    {isDon ? '👑' : '🔪'}
+                  </span>
+                );
+              }
+            }
+
+            let sheriffCheckIcon = null;
+            if (currentRole === 'sheriff' && sheriffChecks[p.id]) {
+              sheriffCheckIcon = <span className="sheriff-check-badge">{getSheriffIcon(sheriffChecks[p.id])}</span>;
+            }
+
+            let donCheckIcon = null;
+            if (currentRole === 'don' && donChecks[p.id] !== undefined) {
+              donCheckIcon = <span className="don-check-badge">{donChecks[p.id] ? '🕵️' : '❌'}</span>;
+            }
 
             return (
               <div key={p.id} className={`player-card ${isDead ? 'dead' : 'alive'} ${isCurrent ? 'current' : ''}`}>
                 <div className="player-name">
                   <span className="player-number">{p.number}.</span> {p.username} {isCurrent && '(Вы)'}
                   {p.nominated && <span className="nominated-mark">📢</span>}
+                  {mafiaAllyIcon}{sheriffCheckIcon}{donCheckIcon}
                 </div>
                 <div className="player-actions">
-                  {canVoteForThis && (
-                    <button onClick={() => handleVote(p.id)} className="vote-btn">
-                      🗳️ Голосовать
-                    </button>
-                  )}
+                  {canVoteForThis && <button onClick={() => handleVote(p.id)} className="vote-btn">🗳️ Голосовать</button>}
                   {canNominateThis && (
-                    <button
-                      onClick={() => handleNominate(p.id)}
-                      className={`nominate-btn ${isNominatedByMe ? 'active' : ''}`}
-                    >
+                    <button onClick={() => handleNominate(p.id)} className={`nominate-btn ${isNominatedByMe ? 'active' : ''}`}>
                       🎤 Выставить
                     </button>
                   )}
                 </div>
-                {currentRole === 'sheriff' && sheriffChecks[p.id] && (
-                  <div className="check-badge">🔍 {sheriffChecks[p.id]}</div>
-                )}
-                {currentRole === 'don' && donChecks[p.id] !== undefined && (
-                  <div className="don-check">
-                    {donChecks[p.id] ? '🕵️' : '❌'}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -387,22 +362,10 @@ export default function GameBoard() {
           <h4>{actionLabel}</h4>
           <div className="players-grid">
             {nightActionType === 'check' 
-              ? getCheckablePlayers().map(p => (
-                  <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
-                    {p.username}
-                  </button>
-                ))
+              ? getCheckablePlayers().map(p => <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">{p.username}</button>)
               : nightActionType === 'heal'
-                ? gameState.players?.filter(p => p.is_alive && p.id !== doctorLastHealTarget).map(p => (
-                    <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
-                      {p.username}
-                    </button>
-                  ))
-                : gameState.players?.filter(p => p.is_alive && p.id !== currentPlayer?.id).map(p => (
-                    <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">
-                      {p.username}
-                    </button>
-                  ))}
+                ? sortedPlayers.filter(p => p.is_alive && p.id !== doctorLastHealTarget).map(p => <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">{p.username}</button>)
+                : sortedPlayers.filter(p => p.is_alive && p.id !== currentPlayer?.id).map(p => <button key={p.id} onClick={() => handleNightAction(p.id)} className="night-action-btn">{p.username}</button>)}
           </div>
         </div>
       )}

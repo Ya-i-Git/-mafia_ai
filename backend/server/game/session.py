@@ -101,9 +101,7 @@ class GameSession:
         self._don_acted = False
         self._sheriff_acted = False
         self._doctor_acted = False
-
-        # Для запрета переголосования (пункт 5)
-        self._has_voted: dict[str, bool] = {}   # user_id -> already voted in current voting round
+        self._has_voted: dict[str, bool] = {}
 
     def _find_player_by_username(self, username: str) -> Optional[Player]:
         for p in self.players.values():
@@ -275,7 +273,9 @@ class GameSession:
                 "don": don_username
             }, uid)
 
+        self._shuffle_players()
         for player in self.players.values():
+            player.is_alive = True
             if player.websocket:
                 await self._send_personal(
                     {"type": "role_assigned", "role": player.role.value},
@@ -285,10 +285,6 @@ class GameSession:
                     {"type": "player_number", "number": player.number},
                     player.user_id
                 )
-
-        self._shuffle_players()
-        for player in self.players.values():
-            player.is_alive = True
 
         story = await self._narrate(GAME_STORY, {})
         await self._broadcast_system(story)
@@ -319,7 +315,7 @@ class GameSession:
             p.nominated = False
         self.nominated_players.clear()
         self.votes.clear()
-        self._has_voted.clear()          # очищаем флаги голосования для нового дня
+        self._has_voted.clear()
         self._update_speaker_order()
         if not self._speaker_order:
             await self._check_win_condition()
@@ -353,11 +349,19 @@ class GameSession:
             await self._change_phase(GamePhase.NOMINATION)
             await self._broadcast_system("Время на речь закончилось. Есть 15 секунд, чтобы выдвинуть игрока.")
             await self.broadcast_game_state()
-            await self._start_timer(DAY_NOMINATION_EXTRA, self._finish_current_speaker, '_nomination_timer_task', '_nomination_timer_deadline')
+            self._nomination_timer_task = asyncio.create_task(self._nomination_timeout())
+            self._nomination_timer_deadline = asyncio.get_event_loop().time() + DAY_NOMINATION_EXTRA
+
+    async def _nomination_timeout(self):
+        await asyncio.sleep(DAY_NOMINATION_EXTRA)
+        await self._finish_current_speaker()
 
     async def _finish_current_speaker(self):
-        for task_name, deadline_name in [('_speech_timer_task', '_speech_timer_deadline'),
-                                         ('_nomination_timer_task', '_nomination_timer_deadline')]:
+        # Отменяем все возможные таймеры
+        for task_name, deadline_name in [
+            ('_speech_timer_task', '_speech_timer_deadline'),
+            ('_nomination_timer_task', '_nomination_timer_deadline')
+        ]:
             task = getattr(self, task_name, None)
             if task and not task.done():
                 task.cancel()
@@ -378,13 +382,11 @@ class GameSession:
         await self._start_player_speech()
 
     async def _process_end_turn(self, user_id: str):
-        # Пункт 4: убираем отзыв голоса, а также не даём завершать ход мёртвым
         player = self.players.get(user_id)
         if not player or not player.is_alive:
             return
 
         if self.phase in (GamePhase.VOTING, GamePhase.VOTING_TIE):
-            # Ничего не делаем, голос не отзывается
             await self._send_personal({"type": "system", "text": "Сейчас нельзя завершить ход."}, user_id)
             return
 
@@ -451,10 +453,7 @@ class GameSession:
             await self._add_history(msg)
             await self._start_night()
             return
-        if len(self.nominated_players) == 1:
-            uid = self.nominated_players[0]
-            await self._start_last_words(uid)
-            return
+        # Всегда переходим к защите и голосованию, даже если один номинант
         self._defense_queue = self.nominated_players.copy()
         self._current_defense_index = 0
         await self._change_phase(GamePhase.DEFENSE)
@@ -506,7 +505,7 @@ class GameSession:
     async def _start_voting(self):
         self.voting_targets = self.nominated_players.copy()
         self.votes.clear()
-        self._has_voted.clear()      # новый раунд голосования
+        self._has_voted.clear()
         await self._change_phase(GamePhase.VOTING)
         await self._broadcast_system(f"Голосование! У вас {VOTING_DURATION} секунд. Выберите игрока.")
         await self.broadcast_game_state()
@@ -561,7 +560,7 @@ class GameSession:
     async def _start_tie_voting(self):
         self.voting_targets = self._defense_queue.copy()
         self.votes.clear()
-        self._has_voted.clear()      # новый раунд голосования
+        self._has_voted.clear()
         await self._change_phase(GamePhase.VOTING_TIE)
         await self._broadcast_system(f"Повторное голосование! {VOTING_TIE_DURATION} секунд.")
         await self.broadcast_game_state()
@@ -754,7 +753,6 @@ class GameSession:
         if not player:
             return
 
-        # Пункт 2: мёртвые не могут выполнять игровые действия (кроме чата)
         if not player.is_alive and msg_type != "chat":
             await self._send_personal({"type": "system", "text": "Вы мертвы и не можете это делать."}, user_id)
             return
@@ -802,7 +800,6 @@ class GameSession:
             self.mafia_chat_log.append(msg)
 
     async def _process_vote(self, user_id: str, target_username: str):
-        # Пункт 5: запрет переголосования
         if self.phase not in (GamePhase.VOTING, GamePhase.VOTING_TIE):
             return
         voter = self.players.get(user_id)
@@ -918,13 +915,11 @@ class GameSession:
                 except Exception:
                     pass
 
-        # Для живых сообщения также логируем в dead_chat_log, если это не служебное
         if message.get("type") not in ("action_result", "game_state"):
             self.dead_chat_log.append(message)
             if len(self.dead_chat_log) > 200:
                 self.dead_chat_log = self.dead_chat_log[-200:]
 
-        # Отправляем мёртвым всегда (если не исключены)
         await self._broadcast_dead(message, exclude)
 
     async def _send_personal(self, message: dict, user_id: str):
@@ -950,14 +945,6 @@ class GameSession:
                 except Exception:
                     pass
 
-        # Пункт 3: сохраняем все сообщения мёртвых в историю
-        # (но не дублируем те, что уже сохранены в _broadcast)
-        # Для простоты – сохраняем только если тип не "action_result"
-        if message.get("type") not in ("action_result", "game_state"):
-            self.dead_chat_log.append(message)
-            if len(self.dead_chat_log) > 200:
-                self.dead_chat_log = self.dead_chat_log[-200:]
-
     async def _send_dead_history(self, user_id: str):
         player = self.players.get(user_id)
         if not player or not player.websocket:
@@ -968,6 +955,17 @@ class GameSession:
             for msg in self.mafia_chat_log:
                 await self._send_personal(msg, user_id)
         await self._send_personal({"type": "system", "text": "Вы перешли в чат мёртвых. Здесь доступна вся история игры."}, user_id)
+
+    async def _send_chat_history(self, user_id: str):
+        """Отправляет историю чата игроку при (пере)подключении."""
+        player = self.players.get(user_id)
+        if not player or not player.websocket:
+            return
+        for msg in self.dead_chat_log:
+            await self._send_personal(msg, user_id)
+        if player.role in (Role.MAFIA, Role.DON):
+            for msg in self.mafia_chat_log:
+                await self._send_personal(msg, user_id)
 
     async def broadcast(self, message: dict, exclude: Optional[list[str]] = None):
         await self._broadcast(message, exclude)
@@ -1015,6 +1013,5 @@ class GameSession:
         }
 
     async def broadcast_game_state(self):
-        # Пункт 1: отправляем состояние и живым, и мёртвым
         state = self.get_game_state()
         await self._broadcast({"type": "game_state", "state": state}, include_dead=True)
