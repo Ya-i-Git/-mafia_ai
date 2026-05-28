@@ -1,3 +1,70 @@
+/* GameBoard.css – с поддержкой смены фона день/ночь */
+
+.game-board {
+  transition: background 0.5s ease, color 0.3s ease;
+  min-height: 100vh;
+}
+
+/* Дневной фон – жёлто-оранжевый */
+.game-board.day-bg {
+  background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+  color: #1a1a2e;
+}
+
+/* Ночной фон – тёмный */
+.game-board.night-bg {
+  background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+  color: #ffffff;
+}
+
+/* ========== Адаптация элементов под фон ========== */
+.game-board.day-bg .players-list {
+  background: rgba(0, 0, 0, 0.05);
+}
+.game-board.night-bg .players-list {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.game-board.day-bg .player-card {
+  background: rgba(255, 255, 255, 0.85);
+  color: #1e2a3a;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+.game-board.night-bg .player-card {
+  background: rgba(30, 40, 50, 0.8);
+  color: #fff;
+}
+
+.game-board.day-bg .game-header {
+  background: rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(4px);
+}
+.game-board.night-bg .game-header {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.game-board.day-bg .current-action {
+  background: rgba(0, 0, 0, 0.08);
+  color: #1a1a2e;
+}
+.game-board.night-bg .current-action {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.game-board.day-bg .end-turn-btn {
+  background: #e67e22;
+  color: #fff;
+}
+.game-board.day-bg .end-turn-btn:hover {
+  background: #f39c12;
+}
+
+.game-board.day-bg .night-actions {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+/* Общие стили (не зависят от фона) */
 .game-board {
   max-width: 1400px;
   margin: 0 auto;
@@ -5,17 +72,55 @@
 }
 
 .game-header {
-  background: rgba(0, 0, 0, 0.5);
-  border-radius: 10px;
-  padding: 15px;
-  margin-bottom: 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 12px 20px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.player-role-display {
+  flex: 1;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.current-action {
+  flex: 2;
+  text-align: center;
+  font-weight: bold;
+  font-size: 1.2rem;
+  padding: 6px 12px;
+  border-radius: 20px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.timer-display {
+  flex: 1;
+  text-align: right;
+}
+
+@media (max-width: 768px) {
+  .game-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .player-role-display, .current-action, .timer-display {
+    text-align: center;
+  }
+  .current-action {
+    white-space: normal;
+  }
 }
 
 .players-list {
-  background: rgba(0, 0, 0, 0.3);
   border-radius: 10px;
   padding: 15px;
   margin-bottom: 20px;
@@ -29,17 +134,17 @@
 }
 
 .player-card {
-  background: rgba(30, 40, 50, 0.8);
   border-radius: 8px;
   padding: 10px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  transition: all 0.2s;
 }
 
 .player-card.dead {
   opacity: 0.5;
-  background: rgba(50, 30, 30, 0.8);
+  background: rgba(50, 30, 30, 0.8) !important;
 }
 
 .player-card button {
@@ -71,6 +176,17 @@
   margin-left: 4px;
 }
 
+.mafia-ally-badge,
+.sheriff-check-badge,
+.don-check-badge {
+  margin-left: 6px;
+  font-size: 1.1em;
+  display: inline-block;
+}
+.mafia-ally-badge { color: #ff4444; filter: drop-shadow(0 0 2px #ff0000); }
+.sheriff-check-badge { color: #00ffcc; }
+.don-check-badge { color: #ffaa44; }
+
 .phase-indicator {
   margin-left: 12px;
   font-size: 14px;
@@ -80,10 +196,10 @@
 }
 
 .night-actions {
-  background: rgba(0, 0, 0, 0.6);
   border-radius: 10px;
   padding: 15px;
   margin: 20px 0;
+  animation: pulse 1s infinite alternate;
 }
 .night-action-btn {
   background: #2c3e50;
@@ -92,9 +208,16 @@
   margin: 5px;
   border-radius: 5px;
   cursor: pointer;
+  transition: background 0.2s;
+  color: white;
 }
 .night-action-btn:hover {
   background: #e67e22;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.6; }
+  100% { opacity: 1; }
 }
 
 .waiting-lobby {
@@ -102,7 +225,6 @@
   min-height: 100vh;
   padding: 20px;
 }
-
 .lobby-container {
   max-width: 800px;
   margin: 0 auto;
@@ -111,7 +233,6 @@
   padding: 20px;
   color: white;
 }
-
 .start-game-btn {
   background: #00f3ff;
   color: #000;
@@ -124,9 +245,87 @@
   width: 100%;
   font-weight: bold;
 }
-
 .start-game-btn:disabled {
   background: #555;
   cursor: not-allowed;
   color: #ccc;
+}
+
+.pre-game {
+  background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+  min-height: 100vh;
+}
+.pre-game-container {
+  max-width: 800px;
+  margin: 0 auto;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 20px;
+  padding: 20px;
+  color: white;
+}
+.pre-game-timer {
+  font-size: 2rem;
+  text-align: center;
+  margin: 20px 0;
+}
+.pre-game-role {
+  text-align: center;
+  font-size: 1.5rem;
+  margin: 20px 0;
+}
+
+.end-turn-btn {
+  display: block;
+  width: 100%;
+  border: none;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: bold;
+  margin-bottom: 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.role-badge, .dead-badge, .alive-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  font-weight: bold;
+}
+.role-badge {
+  background: #2c3e50;
+  color: #ecf0f1;
+}
+.dead-badge {
+  background: #8b0000;
+  color: #ffcccc;
+}
+.alive-badge {
+  background: #27ae60;
+  color: #fff;
+}
+
+.loading {
+  text-align: center;
+  font-size: 1.5rem;
+  padding: 50px;
+  color: white;
+}
+
+.player-actions {
+  display: flex;
+  gap: 5px;
+}
+.vote-btn, .nominate-btn {
+  background: #34495e;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+  color: white;
+}
+.vote-btn:hover, .nominate-btn:hover {
+  background: #2980b9;
 }

@@ -19,13 +19,16 @@ async def game_websocket(websocket: WebSocket, game_id: str, username: str = Que
 
     await game.send_personal({"type": "system", "text": f"Добро пожаловать, {username}."}, player.user_id)
 
+    # Отправляем историю чата при (пере)подключении
+    await game._send_chat_history(player.user_id)
+
     if game.phase != GamePhase.WAITING:
         await game.send_personal({"type": "role_assigned", "role": player.role.value}, player.user_id)
         if not player.is_alive:
             await game._send_dead_history(player.user_id)
-        await game.broadcast_game_state()   # Убрали for_user_id
+        await game.broadcast_game_state()
     else:
-        await game.broadcast_game_state()   # Убрали for_user_id
+        await game.broadcast_game_state()
 
     try:
         while True:
