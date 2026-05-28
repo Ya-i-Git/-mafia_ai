@@ -1,4 +1,3 @@
-# backend/server/game/session.py
 import asyncio
 import logging
 import random
@@ -9,6 +8,15 @@ from backend.server.game.player import Player
 from backend.server.game.roles import Role
 from backend.server.game.constants import *
 
+from backend.narrator.event import (
+    DAY_START,
+    NIGHT_START,
+    GAME_STORY,
+    PLAYER_ELIMINATED,
+    KILL_ANNOUNCEMENT,
+    PEACEFUL_NIGHT,
+)
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -17,6 +25,7 @@ try:
 except ImportError:
     logger.error("Narrator module not found! AI narration will be disabled.")
     AI_AVAILABLE = False
+
 
 class AINarrator:
     def __init__(self, world: str):
@@ -39,6 +48,7 @@ class AINarrator:
             logger.error(f"AI generation failed for event {event_type}: {e}")
             return ""
 
+
 class GamePhase(str, Enum):
     WAITING = "waiting"
     PRE_GAME = "pre_game"
@@ -55,11 +65,12 @@ class GamePhase(str, Enum):
     LAST_WORDS = "last_words"
     GAME_OVER = "game_over"
 
+
 class GameSession:
     def __init__(self, game_id: str, owner_id: str, world: str = "cyberpunk", test_mode: bool = False,
                  narrator: Optional[Any] = None):
         self.game_id = game_id
-        self.owner_id = owner_id          # кто создал игру (имеет право стартовать)
+        self.owner_id = owner_id
         self.world = world
         self.test_mode = test_mode
         self.narrator = narrator or AINarrator(self.world)
@@ -72,8 +83,11 @@ class GameSession:
         self._pre_game_timer_task: Optional[asyncio.Task] = None
         self._pre_game_timer_deadline: Optional[float] = None
         self._speech_timer_task: Optional[asyncio.Task] = None
+        self._speech_timer_deadline: Optional[float] = None
         self._nomination_timer_task: Optional[asyncio.Task] = None
+        self._nomination_timer_deadline: Optional[float] = None
         self._last_words_timer_task: Optional[asyncio.Task] = None
+        self._last_words_timer_deadline: Optional[float] = None
         self._speaker_order: list[str] = []
         self._current_speaker_index = 0
         self._current_speaker_id: Optional[str] = None
@@ -86,7 +100,6 @@ class GameSession:
         self.voting_targets: list[str] = []
         self._defense_queue: list[str] = []
         self._current_defense_index = 0
-        self._vote_change_counts: dict[str, int] = {}
         self.mafia_target: Optional[str] = None
         self.don_check_target: Optional[str] = None
         self.sheriff_check_target: Optional[str] = None
@@ -102,6 +115,10 @@ class GameSession:
         self.mafia_chat_log: list[dict] = []
         self._timer_updater_task: Optional[asyncio.Task] = None
         self.shuffled_player_ids: list[str] = []
+        # Флаги для предотвращения повторных действий в ночи
+        self._don_acted = False
+        self._sheriff_acted = False
+        self._doctor_acted = False
 
     def _find_player_by_username(self, username: str) -> Optional[Player]:
         for p in self.players.values():
@@ -133,27 +150,31 @@ class GameSession:
         logger.info("Game %s phase -> %s", self.game_id, new_phase)
         await self.broadcast_game_state()
 
-    async def _start_timer(self, seconds: float, callback, attr: str = '_phase_timer_task'):
-        task_attr = getattr(self, attr, None)
-        if task_attr and not task_attr.done():
-            task_attr.cancel()
+    async def _start_timer(self, seconds: float, callback, task_attr: str = '_phase_timer_task', deadline_attr: str = '_phase_timer_deadline'):
+        # Отменить предыдущий таймер того же типа
+        task = getattr(self, task_attr, None)
+        if task and not task.done():
+            task.cancel()
+
         async def _wait_and_call():
             await asyncio.sleep(seconds)
             await callback()
-            if self._timer_updater_task:
-                self._timer_updater_task.cancel()
-                self._timer_updater_task = None
-        setattr(self, attr, asyncio.create_task(_wait_and_call()))
-        deadline_attr = attr.replace('_task', '_deadline')
+
+        new_task = asyncio.create_task(_wait_and_call())
+        setattr(self, task_attr, new_task)
         setattr(self, deadline_attr, asyncio.get_event_loop().time() + seconds)
-        if self._timer_updater_task:
-            self._timer_updater_task.cancel()
-        self._timer_updater_task = asyncio.create_task(self._periodic_state_updater())
+
+        # Запускаем периодический апдейтер состояния, если его нет
+        if self._timer_updater_task is None or self._timer_updater_task.done():
+            self._timer_updater_task = asyncio.create_task(self._periodic_state_updater())
 
     async def _periodic_state_updater(self):
         while True:
             await asyncio.sleep(1)
-            if not self._phase_timer_task and not self._pre_game_timer_task and not self._speech_timer_task:
+            # Если нет активных таймеров, завершаем
+            if not (self._phase_timer_task or self._pre_game_timer_task or 
+                    self._speech_timer_task or self._nomination_timer_task or 
+                    self._last_words_timer_task):
                 break
             await self.broadcast_game_state()
 
@@ -171,35 +192,44 @@ class GameSession:
         self._timer_updater_task = None
         self._phase_timer_deadline = None
         self._pre_game_timer_deadline = None
+        self._speech_timer_deadline = None
+        self._nomination_timer_deadline = None
+        self._last_words_timer_deadline = None
 
     async def _pause_between_phases(self, seconds: int = 3):
         await asyncio.sleep(seconds)
 
-    async def _imitate_pause(self):
-        pause = random.uniform(5, 30)
-        await asyncio.sleep(pause)
-
     def _get_remaining_time(self) -> int:
+        now = asyncio.get_event_loop().time()
         if self.phase == GamePhase.PRE_GAME and self._pre_game_timer_deadline:
-            remaining = self._pre_game_timer_deadline - asyncio.get_event_loop().time()
+            remaining = self._pre_game_timer_deadline - now
             return max(0, int(remaining))
-        if self._speech_timer_task and self._phase_timer_deadline:
-            remaining = self._phase_timer_deadline - asyncio.get_event_loop().time()
-            return max(0, int(remaining))
-        if self._phase_timer_deadline:
-            remaining = self._phase_timer_deadline - asyncio.get_event_loop().time()
+
+        deadline = None
+        if self.phase == GamePhase.DAY and self._speech_timer_deadline:
+            deadline = self._speech_timer_deadline
+        elif self.phase == GamePhase.NOMINATION and self._nomination_timer_deadline:
+            deadline = self._nomination_timer_deadline
+        elif self.phase == GamePhase.LAST_WORDS and self._last_words_timer_deadline:
+            deadline = self._last_words_timer_deadline
+        elif self._phase_timer_deadline:
+            deadline = self._phase_timer_deadline
+
+        if deadline:
+            remaining = deadline - now
             return max(0, int(remaining))
         return 0
 
     def add_player(self, user_id: str, username: str) -> Player:
         if user_id in self.players:
             raise ValueError("Игрок уже в игре")
+        if any(p.username == username for p in self.players.values()):
+            raise ValueError("Игрок с таким именем уже в игре")
         if self.phase != GamePhase.WAITING:
             raise ValueError("Игра уже началась, нельзя присоединиться")
         player = Player(user_id, username)
         self.players[user_id] = player
-        if self.phase == GamePhase.WAITING:
-            asyncio.create_task(self.broadcast_game_state())
+        asyncio.create_task(self.broadcast_game_state())
         return player
 
     def assign_roles(self):
@@ -221,6 +251,9 @@ class GameSession:
             self.players[uid].role = role
             if role == Role.DON:
                 self.don_user_id = uid
+        self._don_checked.clear()
+        self._sheriff_checked.clear()
+        self._don_found_sheriff = False
         logger.info("Roles assigned: %s", {p.username: p.role for p in self.players.values()})
 
     def _shuffle_players(self):
@@ -237,19 +270,45 @@ class GameSession:
         offset = (self._day_number - 1) % len(live)
         self._speaker_order = live[offset:] + live[:offset]
         self._current_speaker_index = 0
+        logger.info(f"Day {self._day_number} speaker order: {[self.players[uid].username for uid in self._speaker_order]}")
+
+    async def _clear_nominations(self):
+        for p in self.players.values():
+            p.nominated = False
+        self.nominated_players.clear()
 
     async def _start_pre_game(self):
         await self._change_phase(GamePhase.PRE_GAME)
         self.assign_roles()
+
+        # Отправка ролей и состава мафии
+        mafia_ids = [uid for uid, p in self.players.items() if p.role in (Role.MAFIA, Role.DON)]
+        mafia_usernames = [self.players[uid].username for uid in mafia_ids]
+        don_username = self.players[self.don_user_id].username if self.don_user_id else None
+        for uid in mafia_ids:
+            await self._send_personal({
+                "type": "mafia_team",
+                "members": mafia_usernames,
+                "don": don_username
+            }, uid)
+
+        for player in self.players.values():
+            if player.websocket:
+                await self._send_personal(
+                    {"type": "role_assigned", "role": player.role.value},
+                    player.user_id
+                )
+
         self._shuffle_players()
         for player in self.players.values():
             player.is_alive = True
-        story = await self._narrate("game_story", {})
+
+        story = await self._narrate(GAME_STORY, {})
         await self._broadcast_system(story)
         await self._add_history(story)
         await self.broadcast_game_state()
         await self._broadcast_system("🎲 Игра начинается...")
-        await self._start_timer(PRE_GAME_DURATION, self._begin_game, '_pre_game_timer_task')
+        await self._start_timer(PRE_GAME_DURATION, self._begin_game, '_pre_game_timer_task', '_pre_game_timer_deadline')
 
     async def _begin_game(self):
         if self._pre_game_timer_task:
@@ -273,13 +332,12 @@ class GameSession:
             p.nominated = False
         self.nominated_players.clear()
         self.votes.clear()
-        self._vote_change_counts.clear()
         self._update_speaker_order()
         if not self._speaker_order:
             await self._check_win_condition()
             return
         await self._change_phase(GamePhase.DAY)
-        text = await self._narrate("day_start", {"day_number": self._day_number})
+        text = await self._narrate(DAY_START, {"day_number": self._day_number})
         await self._broadcast_system(text)
         await self._add_history(text)
         await self.broadcast_game_state()
@@ -295,8 +353,8 @@ class GameSession:
         player = self.players[uid]
         await asyncio.sleep(3)
         await self._broadcast_system(f"🎤 Сейчас говорит {player.username}")
-        await self._start_timer(DAY_SPEECH, self._speech_timeout, '_speech_timer_task')
         await self.broadcast_game_state()
+        await self._start_timer(DAY_SPEECH, self._speech_timeout, '_speech_timer_task', '_speech_timer_deadline')
 
     async def _speech_timeout(self):
         if self._current_speaker_id is None:
@@ -306,15 +364,18 @@ class GameSession:
         else:
             await self._change_phase(GamePhase.NOMINATION)
             await self._broadcast_system("Время на речь закончилось. Есть 15 секунд, чтобы выдвинуть игрока.")
-            await self._start_timer(DAY_NOMINATION_EXTRA, self._finish_current_speaker, '_nomination_timer_task')
             await self.broadcast_game_state()
+            await self._start_timer(DAY_NOMINATION_EXTRA, self._finish_current_speaker, '_nomination_timer_task', '_nomination_timer_deadline')
 
     async def _finish_current_speaker(self):
-        for task_name in ['_speech_timer_task', '_nomination_timer_task']:
+        for task_name, deadline_name in [('_speech_timer_task', '_speech_timer_deadline'),
+                                         ('_nomination_timer_task', '_nomination_timer_deadline')]:
             task = getattr(self, task_name, None)
             if task and not task.done():
                 task.cancel()
-                setattr(self, task_name, None)
+            setattr(self, task_name, None)
+            setattr(self, deadline_name, None)
+
         speaker_uid = self._current_speaker_id
         self._current_speaker_id = None
         self._player_nominated_during_speech = False
@@ -369,6 +430,9 @@ class GameSession:
         target = self._find_player_by_username(target_username)
         if not target or not target.is_alive:
             return
+        if target.user_id == user_id:
+            await self._send_personal({"type": "system", "text": "Нельзя выдвигать себя."}, user_id)
+            return
         if target.user_id in self.nominated_players:
             return
         target.nominated = True
@@ -408,19 +472,21 @@ class GameSession:
         await self._change_phase(GamePhase.LAST_WORDS)
         self._current_speaker_id = user_id
         player = self.players[user_id]
-        text = await self._narrate("player_eliminated", {"username": player.username})
+        text = await self._narrate(PLAYER_ELIMINATED, {"username": player.username})
         await self._broadcast_system(text)
         await self._add_history(text)
         await self._broadcast_system(f"{player.username} покидает игру. Прощальная минута ({LAST_WORDS_DURATION} сек).")
         await self.broadcast_game_state()
-        await self._start_timer(LAST_WORDS_DURATION, self._end_last_words, '_last_words_timer_task')
+        await self._start_timer(LAST_WORDS_DURATION, self._end_last_words, '_last_words_timer_task', '_last_words_timer_deadline')
 
     async def _end_last_words(self):
         uid = self._current_speaker_id
         self._current_speaker_id = None
         self._last_words_timer_task = None
+        self._last_words_timer_deadline = None
         if uid:
             await self._eliminate(uid)
+            await self._clear_nominations()
             if not await self._check_win_condition():
                 await self._start_night()
         await self.broadcast_game_state()
@@ -437,7 +503,8 @@ class GameSession:
         player = self.players[uid]
         self._current_speaker_id = uid
         await self._broadcast_system(f"🎤 Слово для защиты у {player.username} ({duration} сек).")
-        await self._start_timer(duration, self._defense_timeout)
+        await self.broadcast_game_state()
+        await self._start_timer(duration, self._defense_timeout, '_phase_timer_task', '_phase_timer_deadline')
 
     async def _defense_timeout(self):
         self._current_speaker_id = None
@@ -447,13 +514,13 @@ class GameSession:
     async def _start_voting(self):
         self.voting_targets = self.nominated_players.copy()
         self.votes.clear()
-        self._vote_change_counts.clear()
         await self._change_phase(GamePhase.VOTING)
         await self._broadcast_system(f"Голосование! У вас {VOTING_DURATION} секунд. Выберите игрока.")
         await self.broadcast_game_state()
-        await self._start_timer(VOTING_DURATION, self._on_voting_end)
+        await self._start_timer(VOTING_DURATION, self._on_voting_end, '_phase_timer_task', '_phase_timer_deadline')
 
     async def _on_voting_end(self):
+        await self._clear_nominations()
         winners = self._tally_votes()
         await self._announce_vote_results()
         if len(winners) == 1:
@@ -501,13 +568,13 @@ class GameSession:
     async def _start_tie_voting(self):
         self.voting_targets = self._defense_queue.copy()
         self.votes.clear()
-        self._vote_change_counts.clear()
         await self._change_phase(GamePhase.VOTING_TIE)
         await self._broadcast_system(f"Повторное голосование! {VOTING_TIE_DURATION} секунд.")
         await self.broadcast_game_state()
-        await self._start_timer(VOTING_TIE_DURATION, self._on_voting_tie_end)
+        await self._start_timer(VOTING_TIE_DURATION, self._on_voting_tie_end, '_phase_timer_task', '_phase_timer_deadline')
 
     async def _on_voting_tie_end(self):
+        await self._clear_nominations()
         winners = self._tally_votes()
         await self._announce_vote_results()
         if len(winners) == 1:
@@ -524,9 +591,7 @@ class GameSession:
         player = self.players.get(user_id)
         if player:
             player.is_alive = False
-            text = await self._narrate("player_eliminated", {"username": player.username})
-            await self._broadcast_system(text)
-            await self._add_history(text)
+            self._update_speaker_order()
             await self._send_dead_history(user_id)
             await self.broadcast_game_state()
 
@@ -538,30 +603,77 @@ class GameSession:
         self.doctor_heal_target = None
         self._mafia_votes.clear()
         self._mafia_chat_enabled = True
-        night_msg = await self._narrate("night_start", {})
+        self._don_acted = False
+        self._sheriff_acted = False
+        self._doctor_acted = False
+        night_msg = await self._narrate(NIGHT_START, {})
         await self._broadcast_system(night_msg)
         await self._add_history(night_msg)
         await self._pause_between_phases()
         await self._broadcast_system("Мафия, просыпайтесь! У вас минута на обсуждение.")
         await self.broadcast_game_state()
-        await self._start_timer(NIGHT_MAFIA_CHAT, self._on_mafia_chat_end)
+        await self._start_timer(NIGHT_MAFIA_CHAT, self._on_mafia_chat_end, '_phase_timer_task', '_phase_timer_deadline')
 
     async def _on_mafia_chat_end(self):
         self._mafia_chat_enabled = False
         await self.send_to_role({"type": "system", "text": "Время обсуждения вышло. Мафия, голосуйте за жертву (у вас 15 секунд)."}, Role.MAFIA)
         await self.send_to_role({"type": "system", "text": "Время обсуждения вышло. Дон, голосуйте за жертву (у вас 15 секунд)."}, Role.DON)
-        await self._start_timer(NIGHT_MAFIA_EXTRA, self._on_night_mafia_end)
+        await self._start_timer(NIGHT_MAFIA_EXTRA, self._on_night_mafia_end, '_phase_timer_task', '_phase_timer_deadline')
 
     async def _on_night_mafia_end(self):
         self.mafia_target = self._resolve_mafia_vote()
-        await self._change_phase(GamePhase.NIGHT_DON)
-        don = self.players.get(self.don_user_id)
-        if don and don.is_alive and not self._don_found_sheriff:
-            await self._broadcast_system("Дон, вы можете проверить одного игрока на роль шерифа (30 секунд).")
-            await self._start_timer(NIGHT_DON_DURATION, self._on_night_don_end)
+        await self._start_don_phase()
+
+    def _all_mafia_voted(self) -> bool:
+        alive_mafia = [uid for uid, p in self.players.items() 
+                       if p.is_alive and p.role in (Role.MAFIA, Role.DON)]
+        if not alive_mafia:
+            return True
+        voted = set(self._mafia_votes.keys())
+        return all(uid in voted for uid in alive_mafia)
+
+    async def _start_night_phase(self, phase: GamePhase, duration: int, next_callback, action_allowed: bool = True):
+        await self._change_phase(phase)
+        if action_allowed:
+            if phase == GamePhase.NIGHT_DON:
+                await self._broadcast_system("Дон, вы можете проверить одного игрока.")
+            elif phase == GamePhase.NIGHT_SHERIFF:
+                await self._broadcast_system("Шериф, вы можете проверить одного игрока.")
+            elif phase == GamePhase.NIGHT_DOCTOR:
+                await self._broadcast_system("Доктор, выберите, кого лечить.")
         else:
-            await self._imitate_pause()
-            await self._on_night_don_end()
+            await self._broadcast_system("Город замирает в ожидании...")
+        await self.broadcast_game_state()
+        await self._start_timer(duration, next_callback, '_phase_timer_task', '_phase_timer_deadline')
+
+    async def _start_don_phase(self):
+        don = self.players.get(self.don_user_id)
+        if don and don.is_alive and not self._don_found_sheriff and not self._don_acted:
+            await self._start_night_phase(GamePhase.NIGHT_DON, NIGHT_DON_DURATION, self._start_sheriff_phase, action_allowed=True)
+        else:
+            pause = random.uniform(5, 30)
+            await self._start_night_phase(GamePhase.NIGHT_DON, pause, self._start_sheriff_phase, action_allowed=False)
+
+    async def _start_sheriff_phase(self):
+        sheriff = next((p for p in self.players.values() if p.role == Role.SHERIFF and p.is_alive), None)
+        if sheriff and not self._sheriff_acted:
+            await self._start_night_phase(GamePhase.NIGHT_SHERIFF, NIGHT_SHERIFF_DURATION, self._start_doctor_phase, action_allowed=True)
+        else:
+            pause = random.uniform(5, 30)
+            await self._start_night_phase(GamePhase.NIGHT_SHERIFF, pause, self._start_doctor_phase, action_allowed=False)
+
+    async def _start_doctor_phase(self):
+        doctor = next((p for p in self.players.values() if p.role == Role.DOCTOR and p.is_alive), None)
+        if doctor and not self._doctor_acted:
+            await self._start_night_phase(GamePhase.NIGHT_DOCTOR, NIGHT_DOCTOR_DURATION, self._end_night, action_allowed=True)
+        else:
+            pause = random.uniform(5, 30)
+            await self._start_night_phase(GamePhase.NIGHT_DOCTOR, pause, self._end_night, action_allowed=False)
+
+    async def _end_night(self):
+        await self._resolve_night()
+        if not await self._check_win_condition():
+            await self._start_day()
 
     def _resolve_mafia_vote(self) -> Optional[str]:
         if not self._mafia_votes:
@@ -580,53 +692,30 @@ class GameSession:
                 return don_vote
         return random.choice(top_candidates)
 
-    async def _on_night_don_end(self):
-        await self._change_phase(GamePhase.NIGHT_SHERIFF)
-        sheriff = next((p for p in self.players.values() if p.role == Role.SHERIFF and p.is_alive), None)
-        if sheriff:
-            await self._broadcast_system("Шериф, вы можете проверить одного игрока (30 секунд).")
-            await self._start_timer(NIGHT_SHERIFF_DURATION, self._on_night_sheriff_end)
-        else:
-            await self._imitate_pause()
-            await self._on_night_sheriff_end()
-
-    async def _on_night_sheriff_end(self):
-        await self._change_phase(GamePhase.NIGHT_DOCTOR)
-        doctor = next((p for p in self.players.values() if p.role == Role.DOCTOR and p.is_alive), None)
-        if doctor:
-            await self._broadcast_system("Доктор, выберите игрока для лечения (30 секунд).")
-            await self._start_timer(NIGHT_DOCTOR_DURATION, self._on_night_doctor_end)
-        else:
-            await self._imitate_pause()
-            await self._on_night_doctor_end()
-
-    async def _on_night_doctor_end(self):
-        await self._resolve_night()
-        if not await self._check_win_condition():
-            await self._start_day()
-
     async def _resolve_night(self):
         killed = None
         if self.mafia_target and self.doctor_heal_target != self.mafia_target:
             killed = self.mafia_target
         if killed:
             self.players[killed].is_alive = False
-            text = await self._narrate("kill_announcement", {"username": self.players[killed].username})
+            self._update_speaker_order()
+            text = await self._narrate(KILL_ANNOUNCEMENT, {"username": self.players[killed].username})
             await self._broadcast_system(text)
             await self._add_history(text)
             await self._send_dead_history(killed)
         else:
-            text = await self._narrate("peaceful_night", {})
+            text = await self._narrate(PEACEFUL_NIGHT, {})
             await self._broadcast_system(text)
             await self._add_history(text)
+
         if self.sheriff_check_target:
             target = self.players.get(self.sheriff_check_target)
             if target:
-                role_text = target.role.value
+                role_text = "мафия" if target.role in (Role.MAFIA, Role.DON) else "мирный"
                 sheriffs = [p for p in self.players.values() if p.role == Role.SHERIFF and p.is_alive]
                 for s in sheriffs:
                     await self._send_personal(
-                        {"type": "system", "text": f"Проверка {target.username}: {role_text}."},
+                        {"type": "system", "text": f"Проверка {target.username}: роль {role_text}."},
                         s.user_id
                     )
         if self.don_check_target:
@@ -718,12 +807,7 @@ class GameSession:
             return
         if target.user_id not in self.voting_targets:
             return
-        changes = self._vote_change_counts.get(user_id, 0)
-        if changes >= 5:
-            await self._send_personal({"type": "system", "text": "Вы исчерпали лимит смен голоса (5)."}, user_id)
-            return
         self.votes[user_id] = target.user_id
-        self._vote_change_counts[user_id] = changes + 1
         await self._send_personal({"type": "system", "text": f"Ваш голос за {target.username} принят."}, user_id)
         await self.broadcast_game_state()
 
@@ -734,49 +818,81 @@ class GameSession:
         target = self._find_player_by_username(target_username) if target_username else None
         if not actor or not actor.is_alive:
             return
-        if action_type == "kill" and self.phase in (GamePhase.NIGHT_MAFIA, GamePhase.NIGHT_DON):
+
+        if action_type == "kill" and self.phase == GamePhase.NIGHT_MAFIA:
             if actor.role in (Role.MAFIA, Role.DON) and target and target.is_alive:
                 self._mafia_votes[user_id] = target.user_id
                 await self._send_personal({"type": "system", "text": f"Ваш голос за убийство {target.username} учтён."}, user_id)
+                if self._all_mafia_voted():
+                    if self._phase_timer_task and not self._phase_timer_task.done():
+                        self._phase_timer_task.cancel()
+                    await self._on_night_mafia_end()
             else:
                 await self._send_personal({"type": "system", "text": "Невозможно выбрать эту цель."}, user_id)
+
         elif action_type == "check" and self.phase == GamePhase.NIGHT_DON:
-            if user_id != self.don_user_id:
+            if user_id != self.don_user_id or self._don_acted:
                 return
-            if target and target.user_id != user_id and target.role not in (Role.MAFIA, Role.DON) \
-                    and target.user_id not in self._don_checked:
-                self.don_check_target = target.user_id
-                self._don_checked.add(target.user_id)
-                is_sheriff = target.role == Role.SHERIFF
-                if is_sheriff:
-                    self._don_found_sheriff = True
-                await self._send_personal(
-                    {"type": "system", "text": f"Вы проверили {target.username}: {'шериф' if is_sheriff else 'не шериф'}."},
-                    user_id
-                )
-            else:
+            if self._don_found_sheriff:
+                await self._send_personal({"type": "system", "text": "Дон уже нашёл шерифа и больше не может проверять."}, user_id)
+                return
+            if not target or not target.is_alive:
+                await self._send_personal({"type": "system", "text": "Цель должна быть жива."}, user_id)
+                return
+            if target.user_id == user_id or target.role in (Role.MAFIA, Role.DON) or target.user_id in self._don_checked:
                 await self._send_personal({"type": "system", "text": "Нельзя проверить этого игрока."}, user_id)
+                return
+            self.don_check_target = target.user_id
+            self._don_checked.add(target.user_id)
+            is_sheriff = target.role == Role.SHERIFF
+            if is_sheriff:
+                self._don_found_sheriff = True
+            await self._send_personal(
+                {"type": "system", "text": f"Вы проверили {target.username}: {'шериф' if is_sheriff else 'не шериф'}."},
+                user_id
+            )
+            self._don_acted = True
+            if self._phase_timer_task and not self._phase_timer_task.done():
+                self._phase_timer_task.cancel()
+            await self._start_sheriff_phase()
+
         elif action_type == "check" and self.phase == GamePhase.NIGHT_SHERIFF:
-            if actor.role == Role.SHERIFF and target and target.user_id != user_id \
-                    and target.user_id not in self._sheriff_checked:
-                self.sheriff_check_target = target.user_id
-                self._sheriff_checked.add(target.user_id)
-                await self._send_personal(
-                    {"type": "system", "text": f"Вы проверили {target.username}: роль {target.role.value}."},
-                    user_id
-                )
-            else:
+            if actor.role != Role.SHERIFF or self._sheriff_acted:
+                return
+            if not target or not target.is_alive:
+                await self._send_personal({"type": "system", "text": "Цель должна быть жива."}, user_id)
+                return
+            if target.user_id == user_id or target.user_id in self._sheriff_checked:
                 await self._send_personal({"type": "system", "text": "Нельзя проверить себя или уже проверенного."}, user_id)
+                return
+            self.sheriff_check_target = target.user_id
+            self._sheriff_checked.add(target.user_id)
+            self._sheriff_acted = True
+            role_text = "мафия" if target.role in (Role.MAFIA, Role.DON) else "мирный"
+            await self._send_personal(
+                {"type": "system", "text": f"Вы проверили {target.username}: роль {role_text}."},
+                user_id
+            )
+            if self._phase_timer_task and not self._phase_timer_task.done():
+                self._phase_timer_task.cancel()
+            await self._start_doctor_phase()
+
         elif action_type == "heal" and self.phase == GamePhase.NIGHT_DOCTOR:
-            if actor.role == Role.DOCTOR and target and target.is_alive:
-                if target.user_id == self._last_heal_target:
-                    await self._send_personal({"type": "system", "text": "Нельзя лечить одного и того же игрока дважды подряд."}, user_id)
-                    return
-                self.doctor_heal_target = target.user_id
-                self._last_heal_target = target.user_id
-                await self._send_personal({"type": "system", "text": f"Вы лечите {target.username}."}, user_id)
-            else:
-                await self._send_personal({"type": "system", "text": "Невозможно вылечить этого игрока."}, user_id)
+            if actor.role != Role.DOCTOR or self._doctor_acted:
+                return
+            if not target or not target.is_alive:
+                await self._send_personal({"type": "system", "text": "Цель должна быть жива."}, user_id)
+                return
+            if target.user_id == self._last_heal_target:
+                await self._send_personal({"type": "system", "text": "Нельзя лечить одного и того же игрока дважды подряд."}, user_id)
+                return
+            self.doctor_heal_target = target.user_id
+            self._last_heal_target = target.user_id
+            self._doctor_acted = True
+            await self._send_personal({"type": "system", "text": f"Вы лечите {target.username}."}, user_id)
+            if self._phase_timer_task and not self._phase_timer_task.done():
+                self._phase_timer_task.cancel()
+            await self._end_night()
 
     async def _broadcast(self, message: dict, exclude: Optional[list[str]] = None):
         if self.test_mode:
@@ -790,9 +906,12 @@ class GameSession:
                     await player.websocket.send_json(message)
                 except Exception:
                     pass
-        if message.get("type") != "action_result":
+
+        if message.get("type") not in ("action_result",):
             self.dead_chat_log.append(message)
-            await self._broadcast_dead(message, exclude)
+            if len(self.dead_chat_log) > 200:
+                self.dead_chat_log = self.dead_chat_log[-200:]
+        await self._broadcast_dead(message, exclude)
 
     async def _send_personal(self, message: dict, user_id: str):
         if self.test_mode:

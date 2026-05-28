@@ -1,4 +1,4 @@
-import  { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import './Timer.css';
 
 interface TimerProps {
@@ -8,17 +8,24 @@ interface TimerProps {
 
 export default function Timer({ seconds, onEnd }: TimerProps) {
   const [timeLeft, setTimeLeft] = useState(seconds);
+  const onEndCalled = useRef(false);
 
   useEffect(() => {
     setTimeLeft(seconds);
+    onEndCalled.current = false;
   }, [seconds]);
 
   useEffect(() => {
     if (timeLeft <= 0) {
-      onEnd();
+      if (!onEndCalled.current) {
+        onEndCalled.current = true;
+        onEnd();
+      }
       return;
     }
-    const timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+    const timer = setInterval(() => {
+      setTimeLeft(prev => prev - 1);
+    }, 1000);
     return () => clearInterval(timer);
   }, [timeLeft, onEnd]);
 

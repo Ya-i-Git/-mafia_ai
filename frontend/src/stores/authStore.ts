@@ -22,20 +22,10 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       user: null,
       username: null,
-      setToken: (token) => {
-        localStorage.setItem('token', token);
-        set({ token });
-      },
+      setToken: (token) => set({ token }),   // persist сам сохранит в localStorage
       setUser: (user) => set({ user }),
-      setUsername: (username) => {
-        localStorage.setItem('username', username);
-        set({ username });
-      },
-      logout: () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('username');
-        set({ token: null, user: null, username: null });
-      },
+      setUsername: (username) => set({ username }),
+      logout: () => set({ token: null, user: null, username: null }),
     }),
     {
       name: 'auth-storage',

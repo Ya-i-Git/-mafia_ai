@@ -1,4 +1,3 @@
-// frontend/src/components/ChatTabs.tsx
 import { useState, useRef, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import './ChatTabs.css';
@@ -18,7 +17,10 @@ export default function ChatTabs({ isAlive, role, phase, onSendMessage }: ChatTa
   const autoScrollRef = useRef(true);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
 
-  // Автоскролл при новых сообщениях, если пользователь не скроллил вверх
+  const isLobby = phase === 'waiting' || phase === 'pre_game';
+  const showDeadTab = !isAlive && !isLobby;
+  const showNightTab = (role === 'mafia' || role === 'don') && phase === 'night_mafia';
+
   useEffect(() => {
     if (autoScrollRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -33,36 +35,36 @@ export default function ChatTabs({ isAlive, role, phase, onSendMessage }: ChatTa
     }
   };
 
-  const showDeadTab = !isAlive;
-  const showNightTab = (role === 'mafia' || role === 'don') && phase === 'night_mafia';
-
   const handleSend = () => {
     if (!message.trim()) return;
-    onSendMessage(message, activeTab);
+    const targetTab = isLobby ? 'common' : activeTab;
+    onSendMessage(message, targetTab);
     setMessage('');
-    autoScrollRef.current = true; // после отправки включаем автоскролл
+    autoScrollRef.current = true;
   };
 
   return (
     <div className="chat-container">
-      <div className="chat-tabs">
-        <button className={activeTab === 'common' ? 'active' : ''} onClick={() => setActiveTab('common')}>
-          💬 Общий
-        </button>
-        {showDeadTab && (
-          <button className={activeTab === 'dead' ? 'active' : ''} onClick={() => setActiveTab('dead')}>
-            👻 Мёртвых
+      {!isLobby && (
+        <div className="chat-tabs">
+          <button className={activeTab === 'common' ? 'active' : ''} onClick={() => setActiveTab('common')}>
+            💬 Общий
           </button>
-        )}
-        {showNightTab && (
-          <button className={activeTab === 'night' ? 'active' : ''} onClick={() => setActiveTab('night')}>
-            🔪 Мафия
-          </button>
-        )}
-      </div>
+          {showDeadTab && (
+            <button className={activeTab === 'dead' ? 'active' : ''} onClick={() => setActiveTab('dead')}>
+              👻 Мёртвых
+            </button>
+          )}
+          {showNightTab && (
+            <button className={activeTab === 'night' ? 'active' : ''} onClick={() => setActiveTab('night')}>
+              🔪 Мафия
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="chat-messages" ref={chatMessagesRef} onScroll={handleScroll}>
-        {messages[activeTab]?.map((msg, idx) => (
+        {(isLobby ? messages.common : messages[activeTab])?.map((msg, idx) => (
           <div key={idx} className={`chat-message ${msg.username === 'Вы' ? 'own' : ''}`}>
             <strong>{msg.username}:</strong> {msg.text}
             <small>{new Date(msg.timestamp).toLocaleTimeString()}</small>
