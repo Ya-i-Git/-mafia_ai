@@ -15,7 +15,14 @@ from backend.narrator.event import (
     PLAYER_ELIMINATED,
     KILL_ANNOUNCEMENT,
     PEACEFUL_NIGHT,
+    NO_NOMINATION,
+    VOTING_START,
+    VOTE_RESULTS,
+    DEFENSE_START,
+    NIGHT_ACTION_RESULT,
 )
+
+from backend.audio.synthesizer import TextToSpeech
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +58,7 @@ class AINarrator:
 
 class GameSession:
     def __init__(self, game_id: str, owner_id: str, world: str = "cyberpunk", test_mode: bool = False,
-                 narrator: Optional[Any] = None):
+             narrator: Optional[Any] = None):
         self.game_id = game_id
         self.owner_id = owner_id
         self.world = world
@@ -102,6 +109,7 @@ class GameSession:
         self._sheriff_acted = False
         self._doctor_acted = False
         self._has_voted: dict[str, bool] = {}
+        self.tts = TextToSpeech()
 
     def _find_player_by_username(self, username: str) -> Optional[Player]:
         for p in self.players.values():
@@ -201,14 +209,18 @@ class GameSession:
         return 0
 
     def add_player(self, user_id: str, username: str) -> Player:
+        logger.info(f"add_player({user_id}, {username}) game={self.game_id} phase={self.phase}")
         if user_id in self.players:
-            raise ValueError("Игрок уже в игре")
+            logger.warning(f"User {user_id} already in game, reusing existing player")
+            return self.players[user_id]
         if any(p.username == username for p in self.players.values()):
             raise ValueError("Игрок с таким именем уже в игре")
         if self.phase != GamePhase.WAITING:
             raise ValueError("Игра уже началась, нельзя присоединиться")
         player = Player(user_id, username)
         self.players[user_id] = player
+        logger.info(f"Player {username} added, total={len(self.players)}")
+        # Отправляем обновлённое состояние всем, включая нового игрока (но у него пока нет ws)
         asyncio.create_task(self.broadcast_game_state())
         return player
 
@@ -357,7 +369,6 @@ class GameSession:
         await self._finish_current_speaker()
 
     async def _finish_current_speaker(self):
-        # Отменяем все возможные таймеры
         for task_name, deadline_name in [
             ('_speech_timer_task', '_speech_timer_deadline'),
             ('_nomination_timer_task', '_nomination_timer_deadline')
@@ -442,18 +453,17 @@ class GameSession:
 
     async def _after_all_speeches(self):
         if self.is_first_day:
-            msg = "Первый день – знакомство. Никто не выставляется. Переход к ночи."
+            msg = await self._narrate("first_day_end", {})
             await self._broadcast_system(msg)
             await self._add_history(msg)
             await self._start_night()
             return
         if not self.nominated_players:
-            msg = "Никто не был выставлен. Переход к ночи."
+            msg = await self._narrate(NO_NOMINATION, {"day_number": self._day_number})
             await self._broadcast_system(msg)
             await self._add_history(msg)
             await self._start_night()
             return
-        # Всегда переходим к защите и голосованию, даже если один номинант
         self._defense_queue = self.nominated_players.copy()
         self._current_defense_index = 0
         await self._change_phase(GamePhase.DEFENSE)
@@ -493,7 +503,8 @@ class GameSession:
         uid = self._defense_queue[self._current_defense_index]
         player = self.players[uid]
         self._current_speaker_id = uid
-        await self._broadcast_system(f"🎤 Слово для защиты у {player.username} ({duration} сек).")
+        msg = await self._narrate(DEFENSE_START, {"username": player.username, "duration": duration})
+        await self._broadcast_system(msg)
         await self.broadcast_game_state()
         await self._start_timer(duration, self._defense_timeout, '_phase_timer_task', '_phase_timer_deadline')
 
@@ -507,7 +518,9 @@ class GameSession:
         self.votes.clear()
         self._has_voted.clear()
         await self._change_phase(GamePhase.VOTING)
-        await self._broadcast_system(f"Голосование! У вас {VOTING_DURATION} секунд. Выберите игрока.")
+        candidates = [self.players[uid].username for uid in self.voting_targets]
+        msg = await self._narrate(VOTING_START, {"candidates": ", ".join(candidates), "voting_duration": VOTING_DURATION})
+        await self._broadcast_system(msg)
         await self.broadcast_game_state()
         await self._start_timer(VOTING_DURATION, self._on_voting_end, '_phase_timer_task', '_phase_timer_deadline')
 
@@ -521,13 +534,13 @@ class GameSession:
             self._defense_queue = winners
             self._current_defense_index = 0
             await self._change_phase(GamePhase.DEFENSE_TIE)
-            msg = "Ничья. Переход к повторному голосованию."
+            msg = await self._narrate("tie_announcement", {})
             await self._broadcast_system(msg)
             await self._add_history(msg)
             await self.broadcast_game_state()
             await self._start_tie_voting()
         else:
-            msg = "Никто не проголосовал. Переход к ночи."
+            msg = await self._narrate("no_votes", {})
             await self._broadcast_system(msg)
             await self._add_history(msg)
             await self.broadcast_game_state()
@@ -545,7 +558,9 @@ class GameSession:
         for uid in self.voting_targets:
             name = self.players[uid].username
             lines.append(f"{name}: {counts[uid]} голосов")
-        await self._broadcast_system("Результаты голосования:\n" + "\n".join(lines))
+        results_text = "\n".join(lines)
+        msg = await self._narrate(VOTE_RESULTS, {"results": results_text})
+        await self._broadcast_system(msg)
 
     def _tally_votes(self) -> list[str]:
         if not self.votes:
@@ -562,7 +577,9 @@ class GameSession:
         self.votes.clear()
         self._has_voted.clear()
         await self._change_phase(GamePhase.VOTING_TIE)
-        await self._broadcast_system(f"Повторное голосование! {VOTING_TIE_DURATION} секунд.")
+        candidates = [self.players[uid].username for uid in self.voting_targets]
+        msg = await self._narrate(VOTING_START, {"candidates": ", ".join(candidates), "voting_duration": VOTING_TIE_DURATION})
+        await self._broadcast_system(msg)
         await self.broadcast_game_state()
         await self._start_timer(VOTING_TIE_DURATION, self._on_voting_tie_end, '_phase_timer_task', '_phase_timer_deadline')
 
@@ -573,7 +590,7 @@ class GameSession:
         if len(winners) == 1:
             await self._start_last_words(winners[0])
         else:
-            msg = "Снова ничья. Никто не покидает город."
+            msg = await self._narrate("another_tie", {})
             await self._broadcast_system(msg)
             await self._add_history(msg)
             await self.broadcast_game_state()
@@ -715,6 +732,9 @@ class GameSession:
                         {"type": "system", "text": f"Проверка {target.username}: роль {role_text}."},
                         s.user_id
                     )
+                result_msg = await self._narrate(NIGHT_ACTION_RESULT, {"role": "sheriff", "target": target.username, "result": role_text})
+                for s in sheriffs:
+                    await self._send_personal({"type": "system", "text": result_msg}, s.user_id)
         if self.don_check_target:
             target = self.players.get(self.don_check_target)
             if target:
@@ -725,6 +745,8 @@ class GameSession:
                         {"type": "system", "text": f"Проверка {target.username}: {'шериф' if is_sheriff else 'не шериф'}."},
                         don.user_id
                     )
+                    result_msg = await self._narrate(NIGHT_ACTION_RESULT, {"role": "don", "target": target.username, "result": "шериф" if is_sheriff else "не шериф"})
+                    await self._send_personal({"type": "system", "text": result_msg}, don.user_id)
 
     async def _check_win_condition(self) -> bool:
         alive_mafia = sum(1 for p in self.players.values() if p.role in (Role.MAFIA, Role.DON) and p.is_alive)
@@ -732,7 +754,7 @@ class GameSession:
         if alive_mafia == 0:
             await self._change_phase(GamePhase.GAME_OVER)
             await self.cancel_timers()
-            win_msg = "Мирные жители победили! Мафия уничтожена."
+            win_msg = await self._narrate("game_over_civilian", {})
             await self._broadcast_system(win_msg)
             await self._add_history(win_msg)
             await self.broadcast_game_state()
@@ -740,7 +762,7 @@ class GameSession:
         if alive_mafia >= alive_others:
             await self._change_phase(GamePhase.GAME_OVER)
             await self.cancel_timers()
-            win_msg = "Мафия захватила город. Победа мафии!"
+            win_msg = await self._narrate("game_over_mafia", {})
             await self._broadcast_system(win_msg)
             await self._add_history(win_msg)
             await self.broadcast_game_state()
@@ -912,8 +934,8 @@ class GameSession:
             if player.websocket:
                 try:
                     await player.websocket.send_json(message)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to send to {player.user_id}: {e}")
 
         if message.get("type") not in ("action_result", "game_state"):
             self.dead_chat_log.append(message)
@@ -926,15 +948,27 @@ class GameSession:
         if self.test_mode:
             return
         player = self.players.get(user_id)
-        if player and player.websocket:
-            try:
-                await player.websocket.send_json(message)
-            except Exception:
-                pass
+        if not player:
+            logger.warning(f"Cannot send personal to {user_id}: player not found")
+            return
+        if not player.websocket:
+            logger.warning(f"Cannot send personal to {user_id}: websocket is None")
+            return
+        try:
+            await player.websocket.send_json(message)
+            logger.debug(f"Personal message sent to {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to send personal to {user_id}: {e}")
 
     async def _broadcast_system(self, text: str):
         msg = {"type": "system", "text": text}
         await self._broadcast(msg)
+        
+        audio_data = await self.tts.synthesize(text)
+        if audio_data:
+            import base64
+            audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+            await self._broadcast({"type": "audio", "data": audio_b64})
 
     async def _broadcast_dead(self, message: dict, exclude: Optional[list[str]] = None):
         exclude = exclude or []
@@ -957,7 +991,6 @@ class GameSession:
         await self._send_personal({"type": "system", "text": "Вы перешли в чат мёртвых. Здесь доступна вся история игры."}, user_id)
 
     async def _send_chat_history(self, user_id: str):
-        """Отправляет историю чата игроку при (пере)подключении."""
         player = self.players.get(user_id)
         if not player or not player.websocket:
             return
@@ -983,24 +1016,19 @@ class GameSession:
         player = self.players.get(user_id)
         if player:
             player.websocket = None
-            logger.info("Player %s disconnected", player.username)
-            if self.phase == GamePhase.WAITING:
-                self.players.pop(user_id, None)
-                asyncio.create_task(self.broadcast_game_state())
-            else:
-                asyncio.create_task(self.broadcast({"type": "system", "text": f"{player.username} отключился. Ожидаем переподключения."}))
+            logger.info("Player %s disconnected, but remains in game", player.username)
+            asyncio.create_task(self.broadcast({"type": "system", "text": f"{player.username} отключился. Ожидаем переподключения."}))
 
     def get_game_state(self) -> dict:
-        players_data = [
-            {
+        players_data = []
+        for uid, p in self.players.items():
+            players_data.append({
                 "id": uid,
                 "username": p.username,
                 "is_alive": p.is_alive,
                 "nominated": p.nominated,
-                "number": p.number,
-            }
-            for uid, p in self.players.items()
-        ]
+                "number": getattr(p, 'number', 0),  # безопасное получение
+            })
         return {
             "phase": self.phase.value,
             "day_number": self._day_number,
