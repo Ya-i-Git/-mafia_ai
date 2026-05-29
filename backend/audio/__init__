@@ -1,0 +1,5 @@
+# backend/audio/__init__.py
+from .recognizer import AudioRecognizer
+from .synthesizer import TextToSpeech
+
+__all__ = ["AudioRecognizer", "TextToSpeech"]

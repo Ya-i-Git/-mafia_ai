@@ -24,3 +24,9 @@ pydantic
 # Тестирование
 pytest
 pytest-asyncio
+
+# Голосовые технологии
+faster-whisper
+edge-tts
+scipy
+numpy
