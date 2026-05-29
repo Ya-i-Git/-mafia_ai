@@ -27,35 +27,40 @@ def get_system_prompt(world: str) -> str:
 
 def get_event_prompt_template(event_type: str, world: str) -> str:
     prompts = PROMPTS_CYBERPUNK if world == "cyberpunk" else PROMPTS_MEDIEVAL
-    return prompts["events"].get(event_type, "Расскажи о событии: {event_type}.")
+    # Безопасный fallback – шаблон без дополнительных переменных
+    return prompts["events"].get(event_type, "Расскажи о событии.")
 
 def select_prompt(state: NarratorState) -> NarratorState:
     if "messages" not in state or state["messages"] is None:
         state["messages"] = []
-
     system_text = get_system_prompt(state["world"])
     event_template = get_event_prompt_template(state["event_type"], state["world"])
-    event_message = event_template.format(
-        event_type=state["event_type"],
-        players_alive=", ".join(state["players_alive"]),
-        **state["event_data"],
-        history=state["history"],
-        daily_fact=state.get("daily_fact", "")
-    )
+    # Безопасное форматирование: заменяем только известные ключи
+    try:
+        event_message = event_template.format(
+            event_type=state["event_type"],
+            players_alive=", ".join(state["players_alive"]),
+            **state["event_data"],
+            history=state["history"],
+            daily_fact=state.get("daily_fact", "")
+        )
+    except KeyError:
+        # Если в шаблоне есть лишние переменные – используем базовый
+        event_message = f"Событие: {state['event_type']}."
     state["messages"].extend([
         SystemMessage(content=system_text),
         HumanMessage(content=event_message)
     ])
     return state
 
-def call_model(state: NarratorState) -> NarratorState:
+async def call_model(state: NarratorState) -> NarratorState:   # ← сделано асинхронным
     llm = ChatGroq(
         model=os.getenv("LLM_MODEL", "llama-3.1-8b-instant"),
         temperature=0.8,
         max_tokens=300,
         api_key=GROQ_API_KEY
     )
-    response = llm.invoke(state["messages"])
+    response = await llm.ainvoke(state["messages"])   # ← асинхронный вызов
     state["response"] = response.content
     return state
 
@@ -72,7 +77,7 @@ def validate(state: NarratorState) -> NarratorState:
 def create_narrator_graph(validate_output: bool = True) -> StateGraph:
     builder = StateGraph(NarratorState)
     builder.add_node("select_prompt", select_prompt)
-    builder.add_node("call_model", call_model)   # синхронный узел без паузы
+    builder.add_node("call_model", call_model)          # теперь асинхронный узел
     if validate_output:
         builder.add_node("validate", validate)
     builder.set_entry_point("select_prompt")

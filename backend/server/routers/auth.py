@@ -1,3 +1,4 @@
+# backend/server/routers/auth.py
 import uuid
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
@@ -15,8 +16,7 @@ class RegisterRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
 
-# Временное хранилище пользователей (в реальном проекте – БД)
-# username -> {"password": str, "user_id": str}
+# Временное хранилище пользователей
 users_db: dict[str, dict] = {}
 
 @router.post("/login", response_model=AuthResponse)

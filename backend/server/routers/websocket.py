@@ -1,5 +1,6 @@
+# backend/server/routers/websocket.py
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from backend.server.services.game_manager import game_manager
+from backend.server.services.game_manager import game_manager, audio_recognizers
 from backend.server.game.session import GamePhase
 from backend.audio.recognizer import AudioRecognizer
 from backend.narrator.intent_parser import IntentParser
@@ -10,7 +11,6 @@ import asyncio
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-audio_recognizers: dict[str, AudioRecognizer] = {}
 _intent_parser: IntentParser | None = None
 
 def get_intent_parser() -> IntentParser | None:
@@ -88,6 +88,7 @@ async def voice_websocket(websocket: WebSocket, game_id: str, username: str = Qu
         await websocket.close(code=4001, reason="Not in lobby")
         return
 
+    # Создаём или получаем распознаватель для этой игры
     if game_id not in audio_recognizers:
         logger.info(f"Creating AudioRecognizer for game {game_id}")
         loop = asyncio.get_event_loop()

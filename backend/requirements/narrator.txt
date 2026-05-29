@@ -1,6 +1,7 @@
 langgraph
 langchain-openai   # или langchain-community + нужный провайдер (например, langchain-ollama)
 langchain-groq
+langchain-core
 langgraph-checkpoint  # опционально, для сохранения состояния
 openai
 tiktoken

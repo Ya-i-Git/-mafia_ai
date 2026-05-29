@@ -1,6 +1,10 @@
+# backend/server/services/game_manager.py
 import uuid
 from typing import Optional
 from backend.server.game.session import GameSession
+
+# Глобальный словарь для AudioRecognizer (перенесён из websocket)
+audio_recognizers: dict[str, any] = {}  # any = AudioRecognizer, но избегаем импорта
 
 class GameManager:
     def __init__(self):
@@ -15,6 +19,8 @@ class GameManager:
         return self._games.get(game_id)
 
     def remove_game(self, game_id: str):
+        # Очищаем AudioRecognizer при удалении игры
+        audio_recognizers.pop(game_id, None)
         self._games.pop(game_id, None)
 
 game_manager = GameManager()
