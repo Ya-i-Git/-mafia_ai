@@ -1,7 +1,12 @@
+<<<<<<< HEAD
+=======
+# backend/db/alembic/env.py
+>>>>>>> c52b19aae51c62459e98a7f345791b542f8370f9
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 from alembic import context
+<<<<<<< HEAD
 
 import sys
 from pathlib import Path
@@ -43,6 +48,26 @@ def run_migrations_offline() -> None:
     script output.
 
     """
+=======
+import sys
+from pathlib import Path
+
+# Добавляем путь к backend
+sys.path.append(str(Path(__file__).parent.parent.parent.parent))
+
+from backend.db.models import Base
+from backend.db.config import DatabaseConfig
+
+config = context.config
+config.set_main_option("sqlalchemy.url", DatabaseConfig.get_database_url())
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = Base.metadata
+
+def run_migrations_offline() -> None:
+>>>>>>> c52b19aae51c62459e98a7f345791b542f8370f9
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -54,6 +79,7 @@ def run_migrations_offline() -> None:
     with context.begin_transaction():
         context.run_migrations()
 
+<<<<<<< HEAD
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
@@ -62,6 +88,9 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+=======
+def run_migrations_online() -> None:
+>>>>>>> c52b19aae51c62459e98a7f345791b542f8370f9
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -76,7 +105,10 @@ def run_migrations_online() -> None:
         with context.begin_transaction():
             context.run_migrations()
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> c52b19aae51c62459e98a7f345791b542f8370f9
 if context.is_offline_mode():
     run_migrations_offline()
 else:
